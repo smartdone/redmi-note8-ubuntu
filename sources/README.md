@@ -1,15 +1,16 @@
 # sources/ — every build input, kept locally
 
 Only this README is tracked in git; the files are large or third-party.
-`./build.sh` runs `scripts/fetch-sources.sh`, which verifies what is here and
-downloads anything missing. With this directory filled, the only network use
+`./get-sources.sh` (and `./build.sh`) run `scripts/fetch-sources.sh` and
+`scripts/fetch-firmware.sh`, which verify what is here and download anything
+missing. With this directory filled, the only network use
 left is apt inside `build-rootfs.sh` (Ubuntu packages) and the Docker base
 image `ubuntu:24.04`.
 
 | File | What | Origin | sha256 |
 |---|---|---|---|
 | `linux-7.3.5.tar.xz` | Kernel source. Unpacked into the docker volume `ginkgo-work` (case-sensitive) by `build.sh`; identical to git tag `v7.3.5` (checked with `diff -r`). Our changes are `kernel/patches/*.patch`. | https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.3.5.tar.xz | `8f293f83d54f0b7b9be56863ebc5e4ea79d73e530b4ae55c572be97ef39f0990` |
-| `linux.sha256` | kernel.org checksum line for the tarball | https://cdn.kernel.org/pub/linux/kernel/v7.x/sha256sums.asc | |
+| `linux.sha256` | checksum line for the tarball (pinned in `fetch-sources.sh`, same as kernel.org's) | https://cdn.kernel.org/pub/linux/kernel/v7.x/sha256sums.asc | |
 | `mkbootimg-d2bb0af.tar.gz` | AOSP `mkbootimg`/`unpack_bootimg`, commit `d2bb0af5ba6d3198a3e99529c97eda1be0b5a093` (2025-03-02). Installed by `docker/Dockerfile`. | https://android.googlesource.com/platform/system/tools/mkbootimg | `4a627d3fa6c262ac832824fe63472be83052e7a9b02cc19787f0861f789ab8fb` |
 | `rootfs-base-noble.tar` | debootstrap `--variant=minbase` base of Ubuntu 24.04 arm64 (systemd, udev, dbus, apt, ca-certificates, gnupg). Created by `build-rootfs.sh` when missing. | ports.ubuntu.com | `e4223e2bf5dc43f1affb637cdcfbd5fb441bbafa05e59cd43cda8a86660d0b8b` |
 | `firmware/focaltech/ft8719_huaxing.bin` | FT8719 touch firmware v0x09 (Huaxing panel), converted from the C array in Xiaomi's GPL kernel by `scripts/fetch-firmware.sh` | LineageOS `android_kernel_xiaomi_sm6125` @ `f5bcc3d7`, `drivers/input/touchscreen/ft8719_spi_c3j/include/firmware/fw_huaxing_v09.i` | `7406fbcd395a3ef8dcab098377938bc3ad83096db1979798d49902926b995dfc` |

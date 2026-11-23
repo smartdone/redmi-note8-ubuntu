@@ -1,5 +1,6 @@
 #!/bin/bash
-# Make sure every build input is present in sources/ (runs on the Mac host).
+# Make sure every build input is present in sources/ (runs on the host,
+# macOS or Linux; called by build.sh and get-sources.sh).
 # Already present files are only verified; missing ones are downloaded.
 # See sources/README.md for what each file is and where it comes from.
 set -euo pipefail
@@ -7,19 +8,27 @@ cd "$(dirname "$0")/.."
 S=sources
 mkdir -p "$S"
 
-sha_ok() { echo "$1  $2" | shasum -a 256 -c --status 2>/dev/null; }
+# GNU sha256sum (Linux), otherwise shasum (macOS: its own sha256sum lacks --status)
+if sha256sum --version 2>/dev/null | grep -q GNU; then SHA256="sha256sum"; else SHA256="shasum -a 256"; fi
+sha256() { $SHA256 "$@"; }
+sha_ok() { echo "$1  $2" | sha256 -c --status 2>/dev/null; }
 
 # ---- Linux kernel (stable tarball, identical to git tag v7.3.5) -------------
 KVER=$(sed 's/^v//' kernel/VERSION)
 KTAR="$S/linux-$KVER.tar.xz"
+# Checksum pinned here for the version in kernel/VERSION; for another version
+# it is taken from kernel.org's sha256sums.asc.
+case "$KVER" in
+    7.3.5) echo "8f293f83d54f0b7b9be56863ebc5e4ea79d73e530b4ae55c572be97ef39f0990  linux-$KVER.tar.xz" > "$S/linux.sha256" ;;
+esac
 if [ ! -f "$S/linux.sha256" ] || ! grep -q " linux-$KVER.tar.xz$" "$S/linux.sha256"; then
     curl -fsSL "https://cdn.kernel.org/pub/linux/kernel/v${KVER%%.*}.x/sha256sums.asc" \
         | grep " linux-$KVER.tar.xz$" > "$S/linux.sha256"
 fi
-if ! (cd "$S" && shasum -a 256 -c --status linux.sha256 2>/dev/null); then
+if ! (cd "$S" && sha256 -c --status linux.sha256 2>/dev/null); then
     echo ">> downloading linux-$KVER.tar.xz"
     curl -fL -o "$KTAR" "https://cdn.kernel.org/pub/linux/kernel/v${KVER%%.*}.x/linux-$KVER.tar.xz"
-    (cd "$S" && shasum -a 256 -c linux.sha256)
+    (cd "$S" && sha256 -c linux.sha256)
 fi
 
 # ---- AOSP mkbootimg (pinned commit) ----------------------------------------

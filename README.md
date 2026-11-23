@@ -31,6 +31,38 @@ FT8719 panel.
 | Sensors, auto-rotate | BMI160 accel, stk3x3x light/proximity, ak0991x compass on the ADSP sensor PD (SSC) | hexagonrpcd + libssc + iio-sensor-proxy (SSC build), see `rootfs/sensors/`; GNOME auto-rotate works |
 | Headphones, microphones, cellular, camera | **not yet** | stage 2+ |
 
+## Sources and versions
+
+Third-party sources are not in this repository; `./get-sources.sh` downloads
+the exact versions below into `sources/` and checks each against a pinned
+sha256 (`./build.sh` does the same automatically, so this step is optional,
+e.g. to prepare an offline build):
+
+```sh
+./get-sources.sh                       # download + verify everything
+./get-sources.sh --list                # print the pinned versions
+./get-sources.sh --kernel-tree ../ginkgo-linux   # + patched kernel tree to read or build
+```
+
+| Component | Version | Upstream | Our changes |
+|---|---|---|---|
+| Linux | 7.3.5 (stable tarball) | https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.3.5.tar.xz | `kernel/patches/` (28 patches: DT for display, GPU, modem/Wi‑Fi, Bluetooth, battery, audio, FastRPC, CPU idle; new drivers for the Huaxing FT8719 panel, FT8719 SPI touch, PMI632 battery monitor, MAX98937 amp; fixes for ath10k, dwc3, geni serial, q6asm), config fragment `kernel/ginkgo.config` |
+| Ubuntu | 24.04 LTS (noble), arm64 | ports.ubuntu.com (debootstrap + apt at build time) | `scripts/build-rootfs.sh`, `rootfs/` |
+| AOSP mkbootimg | commit `d2bb0af5ba6d` | https://android.googlesource.com/platform/system/tools/mkbootimg | — |
+| libssc | 0.4.4 | https://codeberg.org/DylanVanAssche/libssc | — |
+| hexagonrpc (hexagonrpcd) | 0.5.0 | https://github.com/linux-msm/hexagonrpc | — |
+| iio-sensor-proxy | 3.9, `-Dssc-support=enabled` | https://gitlab.freedesktop.org/hadess/iio-sensor-proxy | `rootfs/sensors/iio-sensor-proxy-3.9-claim-during-startup.patch` |
+| meson (build tool for the three above) | 1.7.2 | https://github.com/mesonbuild/meson | — |
+| FT8719 touch firmware | v0x09 (Huaxing) | LineageOS `android_kernel_xiaomi_sm6125` @ `f5bcc3d7` (converted from the GPL C array) | — |
+| ath10k `firmware-5.bin` (WCN3990) | linux-firmware @ `b142c2e0` | https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git | — |
+| Adreno `a630_sqe.fw` | linux-firmware @ `75f16899` | same | — |
+
+File names, checksums and details: [`sources/README.md`](sources/README.md).
+Not downloadable and not needed at build time: the phone's own signed
+firmware (modem, Wi‑Fi board data, ADSP, GPU zap shader, Bluetooth) and
+sensor configuration. They are copied from the stock Android partitions on
+first boot by `ginkgo-firmware.service`, so keep those partitions intact.
+
 ## Build (macOS with Docker, Apple Silicon builds natively)
 
 ```sh
@@ -76,6 +108,7 @@ Requirements: unlocked bootloader, phone in fastboot (Power + Vol-down).
 
 ```
 build.sh                 host entry point (runs everything in Docker)
+get-sources.sh           download + verify all pinned sources (optional: patched kernel tree)
 docker/Dockerfile        build environment (Ubuntu 24.04 arm64)
 kernel/VERSION           pinned kernel tag
 kernel/ginkgo.config     config fragment on top of arm64 defconfig
