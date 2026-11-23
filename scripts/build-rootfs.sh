@@ -64,7 +64,8 @@ if [ "$DESKTOP" = 1 ]; then
         yaru-theme-gtk yaru-theme-icon yaru-theme-gnome-shell yaru-theme-sound \
         fonts-noto-core fonts-noto-cjk fonts-noto-color-emoji \
         xdg-user-dirs-gtk gsettings-desktop-schemas dconf-cli \
-        mesa-utils pipewire wireplumber gnome-screenshot libnotify-bin eog"
+        mesa-utils pipewire wireplumber gnome-screenshot libnotify-bin eog \
+        gnome-menus"
     # Firefox from Mozilla's APT repository (native arm64 deb); Ubuntu's own
     # firefox package is a snap wrapper and snapd needs AppArmor. Repository
     # files and the signing key are in rootfs/firefox/.
@@ -356,6 +357,11 @@ if [ "$DESKTOP" = 1 ]; then
 [daemon]
 AutomaticLoginEnable=true
 AutomaticLogin=ubuntu
+# Automatic login only happens once per GDM start; after "Log Out" the
+# greeter would ask for a password the ubuntu account does not have.
+TimedLoginEnable=true
+TimedLogin=ubuntu
+TimedLoginDelay=1
 WaylandEnable=true
 EOF
     # Phone-friendly defaults: scaling, on-screen keyboard, screen off after

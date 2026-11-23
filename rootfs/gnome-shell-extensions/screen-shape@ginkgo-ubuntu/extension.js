@@ -18,6 +18,83 @@ const DATA_DIRS = [
     '/usr/share/gmobile/display-panels',
 ];
 
+// App grid on a phone-sized screen. GNOME 46 picks the icon size from the
+// first grid item only, but sizes the cells from the largest item (an app
+// folder is bigger than an app icon), and picks rows x columns from a fixed
+// list by aspect ratio (8x3, 6x4, 4x6, 3x8) whether they fit or not. On this
+// screen the cells then do not fit, the spacing goes negative and icons
+// overlap, differently after each rotation. Use a fixed icon size and as many
+// rows/columns as really fit; the rest goes to the next page.
+const APP_GRID_ICON_SIZE = 64;
+
+function fittingGridMode(width, height) {
+    const layout = this.layout_manager;
+    const item = layout._getChildrenMaxSize?.() ?? 0;
+    if (item <= 0) {
+        // no items measured yet: GNOME's own choice
+        Object.getPrototypeOf(this)._findBestModeForSize.call(this, width, height);
+        return;
+    }
+    // The grid can be allocated taller than the scroll view that clips it
+    // (landscape: the second row was cut off above the dash).
+    const view = this.get_parent();
+    if (view?.has_allocation())
+        height = Math.min(height, view.allocation.get_height());
+    const pad = layout.pagePadding;
+    const w = width - pad.left - pad.right;
+    const h = height - pad.top - pad.bottom;
+    const columns = Math.max(1, Math.floor((w + layout.column_spacing) /
+        (item + layout.column_spacing)));
+    const rows = Math.max(1, Math.floor((h + layout.row_spacing) /
+        (item + layout.row_spacing)));
+    if (layout.columns_per_page !== columns || layout.rows_per_page !== rows) {
+        console.log(`screen-shape: app grid ${columns}x${rows} for ${width}x${height} ` +
+            `(item ${item}, padding ${pad.top}/${pad.right}/${pad.bottom}/${pad.left}, ` +
+            `spacing ${layout.column_spacing}/${layout.row_spacing})`);
+        layout.columns_per_page = columns;
+        layout.rows_per_page = rows;
+        // GNOME never moves items between pages when the page holds fewer
+        // (or more) of them: the extra row stayed on the page, cut off.
+        if (!this._ginkgoRepaginateId) {
+            this._ginkgoRepaginateId = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+                this._ginkgoRepaginateId = 0;
+                try {
+                    repaginate(this);
+                } catch (e) {
+                    console.warn(`screen-shape: app grid repagination failed: ${e}`);
+                }
+                return GLib.SOURCE_REMOVE;
+            });
+        }
+    }
+    this._currentMode = -1;
+}
+
+// Lay all items out again, in their current order, with the current number
+// of items per page.
+function repaginate(grid) {
+    const layout = grid.layout_manager;
+    if (!Array.isArray(layout._pages) || typeof layout._addItemToPage !== 'function')
+        return;
+    const perPage = layout.columns_per_page * layout.rows_per_page;
+    const items = layout._pages.flatMap(page => [...page.children]);
+    for (const item of items)
+        layout._removeItemData(item);
+    let visible = 0;
+    for (const item of items) {
+        let page;
+        if (item.visible) {
+            page = Math.floor(visible / perPage);
+            visible++;
+        } else {
+            // hidden items stay next to the previous visible one
+            page = Math.floor(Math.max(visible - 1, 0) / perPage);
+        }
+        layout._addItemToPage(item, Math.min(page, layout._pages.length), -1);
+    }
+    grid.queue_relayout();
+}
+
 function readText(path) {
     try {
         const [ok, bytes] = GLib.file_get_contents(path);
@@ -70,6 +147,29 @@ export default class ScreenShapeExtension extends Extension {
         this._scaleId = this._themeContext.connect('notify::scale-factor',
             () => this._apply());
         this._apply();
+        this._fixAppGrid(true);
+    }
+
+    _fixAppGrid(enable) {
+        const grid = Main.overview._overview?.controls?._appDisplay?._grid;
+        const layout = grid?.layout_manager;
+        if (!layout || !('fixed_icon_size' in layout) ||
+            typeof grid._findBestModeForSize !== 'function')
+            return;
+        layout.fixed_icon_size = enable ? APP_GRID_ICON_SIZE : -1;
+        if (enable) {
+            grid._findBestModeForSize = fittingGridMode;
+        } else {
+            delete grid._findBestModeForSize;
+            if (grid._ginkgoRepaginateId)
+                GLib.source_remove(grid._ginkgoRepaginateId);
+            grid._ginkgoRepaginateId = 0;
+        }
+        grid._currentMode = -1;
+        // sizes are only re-evaluated when the page size changes
+        layout._pageWidth = layout._pageHeight = 0;
+        layout._childrenMaxSize = -1;
+        grid.queue_relayout();
     }
 
     disable() {
@@ -80,6 +180,7 @@ export default class ScreenShapeExtension extends Extension {
             this._themeContext.disconnect(this._scaleId);
         this._scaleId = 0;
         this._restore();
+        this._fixAppGrid(false);
         this._info = null;
     }
 
