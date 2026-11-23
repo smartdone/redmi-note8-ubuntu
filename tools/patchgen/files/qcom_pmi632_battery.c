@@ -1,0 +1,405 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Read-only battery monitor for the Qualcomm PMI632 (QGauge + SMB5 status).
+ *
+ * Charging itself is left entirely to the PMIC as configured by the boot
+ * firmware (float voltage, current limits, JEITA): this driver never writes
+ * a PMIC register. It reports:
+ *  - voltage/current from the QG "last ADC" samples,
+ *  - state of charge from the monitored battery's OCV table, using the
+ *    terminal voltage corrected by the cell resistance (V - I * R),
+ *  - charge status from the SMB5 charger status / power path registers,
+ *  - temperature from the battery thermistor ADC channel (optional).
+ *
+ * Register layout and scaling from Marc Lainez' PMI632 QG/SMB5 drivers
+ * (msm8953-mainline, unmerged) and the downstream qpnp-qg driver.
+ */
+
+#include <linux/bits.h>
+#include <linux/devm-helpers.h>
+#include <linux/iio/consumer.h>
+#include <linux/math64.h>
+#include <linux/module.h>
+#include <linux/mod_devicetable.h>
+#include <linux/platform_device.h>
+#include <linux/power_supply.h>
+#include <linux/property.h>
+#include <linux/regmap.h>
+#include <linux/workqueue.h>
+
+/* QG block */
+#define QG_PERPH_TYPE			0x04
+#define QG_PERPH_TYPE_VALUE		0x0d
+#define QG_STATUS1			0x08
+#define QG_STATUS1_BATT_PRESENT		BIT(0)
+#define QG_LAST_ADC_V			0xc0
+#define QG_LAST_ADC_I			0xc2
+/* raw * 194637 / 1000 = uV, raw * 152588 / 1000 = uA (positive = discharge) */
+#define QG_V_NV_PER_LSB			194637
+#define QG_I_PA_PER_LSB			152588
+
+/* SMB5 charger block */
+#define CHGR_BATTERY_CHARGER_STATUS_1	0x06
+#define CHGR_STATUS_MASK		GENMASK(2, 0)
+#define CHGR_BATTERY_CHARGER_STATUS_2	0x07
+#define CHGR_BAT_OV_BIT			BIT(1)
+/* SMB5 keeps the JEITA status in STATUS_7 (SMB2 had it in STATUS_2) */
+#define CHGR_BATTERY_CHARGER_STATUS_7	0x0d
+#define CHGR_BAT_TEMP_HOT_SOFT_BIT	BIT(5)
+#define CHGR_BAT_TEMP_COLD_SOFT_BIT	BIT(4)
+#define CHGR_BAT_TEMP_TOO_HOT_BIT	BIT(3)
+#define CHGR_BAT_TEMP_TOO_COLD_BIT	BIT(2)
+#define DCDC_POWER_PATH_STATUS		0x10b
+#define P_PATH_USE_USBIN_BIT		BIT(4)
+#define P_PATH_VALID_INPUT_BIT		BIT(0)
+
+enum smb5_charger_status {
+	INHIBIT_CHARGE = 0,
+	TRICKLE_CHARGE,
+	PRE_CHARGE,
+	FULLON_CHARGE,
+	TAPER_CHARGE,
+	TERMINATE_CHARGE,
+	PAUSE_CHARGE,
+	DISABLE_CHARGE,
+};
+
+#define POLL_MS				30000
+#define DEFAULT_RBATT_UOHM		150000
+
+struct pmi632_bat {
+	struct device *dev;
+	struct regmap *regmap;
+	u32 qg_base;
+	u32 chgr_base;
+	u32 rbatt_uohm;
+
+	struct power_supply *bat_psy;
+	struct power_supply *usb_psy;
+	struct power_supply_battery_info *info;
+	struct iio_channel *therm;
+
+	struct delayed_work poll;
+	int capacity;			/* filtered, -1 until first sample */
+	bool usb_online;
+};
+
+static int pmi632_read16(struct pmi632_bat *b, u32 reg, u16 *val)
+{
+	__le16 raw;
+	int ret;
+
+	ret = regmap_bulk_read(b->regmap, reg, &raw, sizeof(raw));
+	if (ret)
+		return ret;
+	*val = le16_to_cpu(raw);
+	return 0;
+}
+
+static int pmi632_vbat_uv(struct pmi632_bat *b, int *uv)
+{
+	u16 raw;
+	int ret = pmi632_read16(b, b->qg_base + QG_LAST_ADC_V, &raw);
+
+	if (!ret)
+		*uv = div_u64((u64)raw * QG_V_NV_PER_LSB, 1000);
+	return ret;
+}
+
+/* power_supply ABI: positive while charging, negative while discharging */
+static int pmi632_ibat_ua(struct pmi632_bat *b, int *ua)
+{
+	u16 raw;
+	int ret = pmi632_read16(b, b->qg_base + QG_LAST_ADC_I, &raw);
+
+	if (!ret)
+		*ua = -(int)div_s64((s64)(s16)raw * QG_I_PA_PER_LSB, 1000);
+	return ret;
+}
+
+static bool pmi632_usb_online(struct pmi632_bat *b)
+{
+	unsigned int stat;
+
+	if (regmap_read(b->regmap, b->chgr_base + DCDC_POWER_PATH_STATUS, &stat))
+		return false;
+	return (stat & P_PATH_USE_USBIN_BIT) && (stat & P_PATH_VALID_INPUT_BIT);
+}
+
+static int pmi632_status(struct pmi632_bat *b)
+{
+	u8 stat[2];
+
+	if (!pmi632_usb_online(b))
+		return POWER_SUPPLY_STATUS_DISCHARGING;
+	if (regmap_bulk_read(b->regmap, b->chgr_base + CHGR_BATTERY_CHARGER_STATUS_1,
+			     stat, sizeof(stat)))
+		return POWER_SUPPLY_STATUS_UNKNOWN;
+	if (stat[1] & CHGR_BAT_OV_BIT)
+		return POWER_SUPPLY_STATUS_NOT_CHARGING;
+
+	switch (stat[0] & CHGR_STATUS_MASK) {
+	case TRICKLE_CHARGE:
+	case PRE_CHARGE:
+	case FULLON_CHARGE:
+	case TAPER_CHARGE:
+		return POWER_SUPPLY_STATUS_CHARGING;
+	case TERMINATE_CHARGE:
+	case INHIBIT_CHARGE:
+		return POWER_SUPPLY_STATUS_FULL;
+	default:
+		return POWER_SUPPLY_STATUS_NOT_CHARGING;
+	}
+}
+
+static int pmi632_health(struct pmi632_bat *b)
+{
+	unsigned int stat2, stat7;
+
+	if (regmap_read(b->regmap, b->chgr_base + CHGR_BATTERY_CHARGER_STATUS_2, &stat2) ||
+	    regmap_read(b->regmap, b->chgr_base + CHGR_BATTERY_CHARGER_STATUS_7, &stat7))
+		return POWER_SUPPLY_HEALTH_UNKNOWN;
+	if (stat2 & CHGR_BAT_OV_BIT)
+		return POWER_SUPPLY_HEALTH_OVERVOLTAGE;
+	if (stat7 & CHGR_BAT_TEMP_TOO_HOT_BIT)
+		return POWER_SUPPLY_HEALTH_OVERHEAT;
+	if (stat7 & CHGR_BAT_TEMP_TOO_COLD_BIT)
+		return POWER_SUPPLY_HEALTH_COLD;
+	if (stat7 & CHGR_BAT_TEMP_HOT_SOFT_BIT)
+		return POWER_SUPPLY_HEALTH_WARM;
+	if (stat7 & CHGR_BAT_TEMP_COLD_SOFT_BIT)
+		return POWER_SUPPLY_HEALTH_COOL;
+	return POWER_SUPPLY_HEALTH_GOOD;
+}
+
+/* State of charge from the resistance-corrected voltage (raw, unfiltered) */
+static int pmi632_capacity_raw(struct pmi632_bat *b)
+{
+	int uv, ua, ocv;
+
+	if (pmi632_vbat_uv(b, &uv) || pmi632_ibat_ua(b, &ua))
+		return -EIO;
+	ocv = uv - (int)div_s64((s64)ua * b->rbatt_uohm, 1000000);
+	return clamp(power_supply_batinfo_ocv2cap(b->info, ocv, 25), 0, 100);
+}
+
+static void pmi632_update(struct pmi632_bat *b)
+{
+	int cap = pmi632_capacity_raw(b);
+	bool online = pmi632_usb_online(b);
+	bool changed = online != b->usb_online;
+
+	if (cap >= 0) {
+		/* simple low-pass: the voltage dips with every load spike */
+		int filtered = b->capacity < 0 ? cap : (b->capacity * 3 + cap + 2) / 4;
+
+		changed |= filtered != b->capacity;
+		b->capacity = filtered;
+	}
+	b->usb_online = online;
+
+	if (changed) {
+		power_supply_changed(b->bat_psy);
+		power_supply_changed(b->usb_psy);
+	}
+}
+
+static void pmi632_poll_work(struct work_struct *work)
+{
+	struct pmi632_bat *b = container_of(work, struct pmi632_bat, poll.work);
+
+	pmi632_update(b);
+	schedule_delayed_work(&b->poll, msecs_to_jiffies(POLL_MS));
+}
+
+static int pmi632_bat_get_property(struct power_supply *psy,
+				   enum power_supply_property psp,
+				   union power_supply_propval *val)
+{
+	struct pmi632_bat *b = power_supply_get_drvdata(psy);
+	unsigned int stat;
+	int ret = 0;
+
+	switch (psp) {
+	case POWER_SUPPLY_PROP_PRESENT:
+		ret = regmap_read(b->regmap, b->qg_base + QG_STATUS1, &stat);
+		val->intval = !ret && (stat & QG_STATUS1_BATT_PRESENT);
+		break;
+	case POWER_SUPPLY_PROP_STATUS:
+		val->intval = pmi632_status(b);
+		break;
+	case POWER_SUPPLY_PROP_HEALTH:
+		val->intval = pmi632_health(b);
+		break;
+	case POWER_SUPPLY_PROP_TECHNOLOGY:
+		val->intval = b->info->technology;
+		break;
+	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
+		ret = pmi632_vbat_uv(b, &val->intval);
+		break;
+	case POWER_SUPPLY_PROP_CURRENT_NOW:
+		ret = pmi632_ibat_ua(b, &val->intval);
+		break;
+	case POWER_SUPPLY_PROP_CAPACITY:
+		if (b->capacity < 0)
+			pmi632_update(b);
+		if (b->capacity < 0)
+			return -ENODATA;
+		val->intval = b->capacity;
+		break;
+	case POWER_SUPPLY_PROP_TEMP:
+		if (!b->therm)
+			return -ENODATA;
+		/* IIO reports millidegrees, power_supply wants tenths */
+		ret = iio_read_channel_processed(b->therm, &val->intval);
+		if (!ret)
+			val->intval /= 100;
+		break;
+	case POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN:
+		val->intval = b->info->charge_full_design_uah;
+		break;
+	case POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN:
+		val->intval = b->info->voltage_max_design_uv;
+		break;
+	case POWER_SUPPLY_PROP_VOLTAGE_MIN_DESIGN:
+		val->intval = b->info->voltage_min_design_uv;
+		break;
+	case POWER_SUPPLY_PROP_SCOPE:
+		val->intval = POWER_SUPPLY_SCOPE_SYSTEM;
+		break;
+	default:
+		return -EINVAL;
+	}
+	return ret;
+}
+
+static const enum power_supply_property pmi632_bat_props[] = {
+	POWER_SUPPLY_PROP_PRESENT,
+	POWER_SUPPLY_PROP_STATUS,
+	POWER_SUPPLY_PROP_HEALTH,
+	POWER_SUPPLY_PROP_TECHNOLOGY,
+	POWER_SUPPLY_PROP_VOLTAGE_NOW,
+	POWER_SUPPLY_PROP_CURRENT_NOW,
+	POWER_SUPPLY_PROP_CAPACITY,
+	POWER_SUPPLY_PROP_TEMP,
+	POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN,
+	POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN,
+	POWER_SUPPLY_PROP_VOLTAGE_MIN_DESIGN,
+	POWER_SUPPLY_PROP_SCOPE,
+};
+
+static const struct power_supply_desc pmi632_bat_desc = {
+	.name = "battery",
+	.type = POWER_SUPPLY_TYPE_BATTERY,
+	.properties = pmi632_bat_props,
+	.num_properties = ARRAY_SIZE(pmi632_bat_props),
+	.get_property = pmi632_bat_get_property,
+};
+
+static int pmi632_usb_get_property(struct power_supply *psy,
+				   enum power_supply_property psp,
+				   union power_supply_propval *val)
+{
+	struct pmi632_bat *b = power_supply_get_drvdata(psy);
+
+	if (psp != POWER_SUPPLY_PROP_ONLINE)
+		return -EINVAL;
+	val->intval = pmi632_usb_online(b);
+	return 0;
+}
+
+static const enum power_supply_property pmi632_usb_props[] = {
+	POWER_SUPPLY_PROP_ONLINE,
+};
+
+static const struct power_supply_desc pmi632_usb_desc = {
+	.name = "usb",
+	.type = POWER_SUPPLY_TYPE_USB,
+	.properties = pmi632_usb_props,
+	.num_properties = ARRAY_SIZE(pmi632_usb_props),
+	.get_property = pmi632_usb_get_property,
+};
+
+static int pmi632_bat_probe(struct platform_device *pdev)
+{
+	struct device *dev = &pdev->dev;
+	struct power_supply_config cfg = {};
+	struct pmi632_bat *b;
+	unsigned int type;
+	u32 reg[2];
+	int ret;
+
+	b = devm_kzalloc(dev, sizeof(*b), GFP_KERNEL);
+	if (!b)
+		return -ENOMEM;
+	b->dev = dev;
+	b->capacity = -1;
+
+	b->regmap = dev_get_regmap(dev->parent, NULL);
+	if (!b->regmap)
+		return dev_err_probe(dev, -ENODEV, "no parent regmap\n");
+
+	/* reg = <QG base>, <charger base> */
+	ret = device_property_read_u32_array(dev, "reg", reg, 2);
+	if (ret)
+		return dev_err_probe(dev, ret, "need QG and charger base in reg\n");
+	b->qg_base = reg[0];
+	b->chgr_base = reg[1];
+
+	ret = regmap_read(b->regmap, b->qg_base + QG_PERPH_TYPE, &type);
+	if (ret || type != QG_PERPH_TYPE_VALUE)
+		return dev_err_probe(dev, -ENODEV, "no QG at 0x%x (type 0x%x)\n",
+				     b->qg_base, type);
+
+	b->rbatt_uohm = DEFAULT_RBATT_UOHM;
+	device_property_read_u32(dev, "qcom,rbatt-micro-ohms", &b->rbatt_uohm);
+
+	b->therm = devm_iio_channel_get(dev, "batt-therm");
+	if (IS_ERR(b->therm)) {
+		if (PTR_ERR(b->therm) == -EPROBE_DEFER)
+			return -EPROBE_DEFER;
+		b->therm = NULL;
+	}
+
+	cfg.drv_data = b;
+	cfg.fwnode = dev_fwnode(dev);
+	b->bat_psy = devm_power_supply_register(dev, &pmi632_bat_desc, &cfg);
+	if (IS_ERR(b->bat_psy))
+		return dev_err_probe(dev, PTR_ERR(b->bat_psy), "battery psy\n");
+
+	ret = power_supply_get_battery_info(b->bat_psy, &b->info);
+	if (ret)
+		return dev_err_probe(dev, ret, "no monitored-battery info\n");
+	if (!b->info->ocv_table_size[0])
+		return dev_err_probe(dev, -EINVAL, "battery has no OCV table\n");
+
+	cfg.fwnode = NULL;
+	b->usb_psy = devm_power_supply_register(dev, &pmi632_usb_desc, &cfg);
+	if (IS_ERR(b->usb_psy))
+		return dev_err_probe(dev, PTR_ERR(b->usb_psy), "usb psy\n");
+
+	ret = devm_delayed_work_autocancel(dev, &b->poll, pmi632_poll_work);
+	if (ret)
+		return ret;
+	schedule_delayed_work(&b->poll, 0);
+	return 0;
+}
+
+static const struct of_device_id pmi632_bat_of_match[] = {
+	{ .compatible = "qcom,pmi632-battery-monitor" },
+	{ }
+};
+MODULE_DEVICE_TABLE(of, pmi632_bat_of_match);
+
+static struct platform_driver pmi632_bat_driver = {
+	.probe = pmi632_bat_probe,
+	.driver = {
+		.name = "qcom-pmi632-battery",
+		.of_match_table = pmi632_bat_of_match,
+	},
+};
+module_platform_driver(pmi632_bat_driver);
+
+MODULE_DESCRIPTION("Qualcomm PMI632 read-only battery monitor");
+MODULE_LICENSE("GPL");
+MODULE_IMPORT_NS("IIO_CONSUMER");

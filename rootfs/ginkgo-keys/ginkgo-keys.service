@@ -1,0 +1,12 @@
+[Unit]
+Description=Phone-style power / screenshot keys
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=/usr/local/bin/ginkgo-keys
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target

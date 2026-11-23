@@ -1,0 +1,28 @@
+Start sensors that were claimed while they were still being discovered.
+
+With SSC (libssc) sensors, find_sensors()/driver_open() run synchronous QMI
+requests that iterate the main loop, and the bus name is already owned, so a
+client (gnome-shell, gsd-power) can call ClaimAccelerometer/ClaimLight before
+the device exists. The claim is recorded, but the coldplug path in
+name_acquired_handler() never started polling for already-claimed sensors
+(the hotplug path in sensor_changes() does), so no orientation or light
+reading ever arrived.
+
+--- a/src/iio-sensor-proxy.c
++++ b/src/iio-sensor-proxy.c
+@@ -777,6 +777,15 @@ name_acquired_handler (GDBusConnection *connection,
+ 		}
+ 
+ 		DEVICE_FOR_TYPE(i) = sensor_device;
++
++		/* Claimed while we were still discovering it: start it now and
++		 * send the property change with the first measurement, as the
++		 * hotplug path does. */
++		if (g_hash_table_size (data->clients[i]) > 0) {
++			g_debug ("%s claimed during startup, starting it", driver_type_to_str (i));
++			data->sensor_startup_dbus_event_delayed[i] = TRUE;
++			driver_set_polling (sensor_device, TRUE);
++		}
+ 	}
+ 
+ 	if (!any_sensors_left (data))

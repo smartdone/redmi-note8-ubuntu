@@ -1,0 +1,35 @@
+--- a/sound/soc/qcom/qdsp6/q6asm-dai.c
++++ b/sound/soc/qcom/qdsp6/q6asm-dai.c
+@@ -28,6 +28,13 @@
+ #define PLAYBACK_MAX_NUM_PERIODS   8
+ #define PLAYBACK_MAX_PERIOD_SIZE    65536
+ #define PLAYBACK_MIN_PERIOD_SIZE    128
++/*
++ * The SM6125 (trinket) ADSP refuses ASM_CMD_SHARED_MEM_MAP_REGIONS for some
++ * buffers above 384 KiB (e.g. 7 or 8 periods of 64 KiB: "DSP returned
++ * error[1]", "Memory_map_regions failed"), 6 x 64 KiB always maps. ALSA
++ * tools that ask for the largest buffer then fail with -ENOMEM.
++ */
++#define PLAYBACK_MAX_BUFFER_BYTES   (6 * PLAYBACK_MAX_PERIOD_SIZE)
+ #define CAPTURE_MIN_NUM_PERIODS     2
+ #define CAPTURE_MAX_NUM_PERIODS     8
+ #define CAPTURE_MAX_PERIOD_SIZE     4096
+@@ -119,8 +126,7 @@
+ 	.rate_max =             192000,
+ 	.channels_min =         1,
+ 	.channels_max =         8,
+-	.buffer_bytes_max =     (PLAYBACK_MAX_NUM_PERIODS *
+-				PLAYBACK_MAX_PERIOD_SIZE),
++	.buffer_bytes_max =     PLAYBACK_MAX_BUFFER_BYTES,
+ 	.period_bytes_min =	PLAYBACK_MIN_PERIOD_SIZE,
+ 	.period_bytes_max =     PLAYBACK_MAX_PERIOD_SIZE,
+ 	.periods_min =          PLAYBACK_MIN_NUM_PERIODS,
+@@ -416,7 +422,7 @@
+ 		ret = snd_pcm_hw_constraint_minmax(runtime,
+ 			SNDRV_PCM_HW_PARAM_BUFFER_BYTES,
+ 			PLAYBACK_MIN_NUM_PERIODS * PLAYBACK_MIN_PERIOD_SIZE,
+-			PLAYBACK_MAX_NUM_PERIODS * PLAYBACK_MAX_PERIOD_SIZE);
++			PLAYBACK_MAX_BUFFER_BYTES);
+ 		if (ret < 0) {
+ 			dev_err(dev, "constraint for buffer bytes min max ret = %d\n",
+ 				ret);

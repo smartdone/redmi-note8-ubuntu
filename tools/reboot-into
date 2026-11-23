@@ -1,0 +1,8 @@
+#!/bin/bash
+# reboot-into IMG: reboot the running phone (Ubuntu) into fastboot, boot IMG,
+# wait for SSH, then set the phone clock from the Mac (no RTC/NTP yet).
+here=$(cd "$(dirname "$0")" && pwd)
+"$here/pssh" 'sudo systemctl reboot --reboot-argument=bootloader' >/dev/null 2>&1
+"$here/fastboot-boot" "$1" || exit $?
+case "$1" in *rescue*) exit 0;; esac
+"$here/pssh" "sudo date -u -s '$(date -u '+%Y-%m-%d %H:%M:%S')' >/dev/null"

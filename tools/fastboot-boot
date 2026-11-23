@@ -1,0 +1,20 @@
+#!/bin/bash
+# fastboot-boot IMG [--wait]: boot IMG from fastboot (RAM only, nothing flashed)
+# and wait until SSH (or, for the rescue image, telnet) answers.
+#   --wait  keep polling up to 15 min for the phone to enter fastboot
+# Stock ABL quirk: the first `fastboot boot` sometimes says OKAY but does not
+# jump; a second attempt does. The phone also tends to need a USB replug after
+# large flashes if fastboot stops answering.
+set -u
+img=$1; tries=${2:+450}; tries=${tries:-30}
+for i in $(seq 1 "$tries"); do fastboot devices | grep -q fastboot && break; sleep 2; done
+fastboot devices | grep -q fastboot || { echo "phone is not in fastboot"; exit 1; }
+sleep 5
+timeout 40 fastboot boot "$img" 2>&1 | tail -1; sleep 12
+fastboot devices | grep -q fastboot && { echo "== second boot attempt"; timeout 40 fastboot boot "$img" 2>&1 | tail -1; }
+port=22; case "$img" in *rescue*) port=23;; esac
+for i in $(seq 1 120); do
+    nc -z -G 2 172.16.42.1 $port 2>/dev/null && { echo "== phone up (port $port) after ~$((i*2))s"; exit 0; }
+    sleep 1
+done
+echo "== phone did not come up on port $port"; exit 2

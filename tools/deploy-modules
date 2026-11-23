@@ -1,0 +1,13 @@
+#!/bin/bash
+# deploy-modules: install out/modules.tar.gz (from ./build.sh kernel) into the
+# phone's running rootfs, so modules match a kernel booted with fastboot boot.
+set -e
+here=$(cd "$(dirname "$0")" && pwd)
+root=$(dirname "$here")
+scp -q -o UserKnownHostsFile="$here/.known_hosts" "$root/out/modules.tar.gz" ubuntu@172.16.42.1:
+"$here/pssh" 'v=$(tar -tzf ~/modules.tar.gz | sed -n "s|^lib/modules/\([^/]*\)/$|\1|p" | head -1)
+    # replace the whole tree: stale .ko files from older configs (e.g. a driver
+    # that became built-in) would otherwise still be picked up by depmod
+    sudo rm -rf "/usr/lib/modules/$v"
+    sudo tar -C /usr -xzf ~/modules.tar.gz 2>/dev/null; sudo depmod -a "$v"; rm ~/modules.tar.gz
+    echo "modules $v installed"'

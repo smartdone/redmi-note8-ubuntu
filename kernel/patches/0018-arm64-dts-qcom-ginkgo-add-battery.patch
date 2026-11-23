@@ -1,0 +1,103 @@
+--- a/arch/arm64/boot/dts/qcom/sm6125-xiaomi-ginkgo.dts
++++ b/arch/arm64/boot/dts/qcom/sm6125-xiaomi-ginkgo.dts
+@@ -157,3 +157,100 @@
+ 		firmware-name = "qcom/sm6125/xiaomi/ginkgo/a610_zap.mdt";
+ 	};
+ };
++
++/*
++ * Battery: 4000 mAh, 4.4 V. OCV table: stock profile
++ * 4124117_LC_M516_ATL_4000mAH_PMI632 (batt-id 68k), 25 degC column; the
++ * Coslight (100k) cell is within ~20 mV. Charging is left to the PMIC as set
++ * up by the boot firmware; the monitor below only reads registers.
++ */
++/ {
++	battery: battery {
++		compatible = "simple-battery";
++		device-chemistry = "lithium-ion-polymer";
++		charge-full-design-microamp-hours = <4000000>;
++		voltage-min-design-microvolt = <3400000>;
++		voltage-max-design-microvolt = <4400000>;
++		ocv-capacity-celsius = <25>;
++		/* qcom,atl_4000mah: qcom,pc-temp-v1-lut, 25 degC column */
++		ocv-capacity-table-0 = <4386600 100>,
++						       <4362300 98>,
++						       <4338100 96>,
++						       <4314000 94>,
++						       <4290100 92>,
++						       <4266300 90>,
++						       <4242900 88>,
++						       <4219700 86>,
++						       <4197100 84>,
++						       <4174800 82>,
++						       <4152700 80>,
++						       <4130800 78>,
++						       <4109400 76>,
++						       <4089400 74>,
++						       <4070100 72>,
++						       <4050500 70>,
++						       <4029700 68>,
++						       <4010100 66>,
++						       <3994000 64>,
++						       <3979900 62>,
++						       <3963400 60>,
++						       <3941700 58>,
++						       <3919800 56>,
++						       <3901500 54>,
++						       <3885100 52>,
++						       <3871900 50>,
++						       <3862000 48>,
++						       <3853300 46>,
++						       <3844700 44>,
++						       <3836500 42>,
++						       <3829200 40>,
++						       <3822500 38>,
++						       <3816600 36>,
++						       <3811700 34>,
++						       <3807700 32>,
++						       <3803500 30>,
++						       <3799300 28>,
++						       <3794700 26>,
++						       <3788200 24>,
++						       <3779600 22>,
++						       <3769700 20>,
++						       <3758100 18>,
++						       <3744800 16>,
++						       <3728500 14>,
++						       <3714600 12>,
++						       <3706100 10>,
++						       <3703700 9>,
++						       <3702400 8>,
++						       <3700300 7>,
++						       <3693000 6>,
++						       <3662500 5>,
++						       <3617100 4>,
++						       <3558200 3>,
++						       <3477500 2>,
++						       <3350500 1>,
++						       <3000000 0>;
++	};
++};
++
++&pmi632_adc {
++	channel@4a {
++		reg = <ADC5_BAT_THERM_100K_PU>;
++		qcom,hw-settle-time = <200>;
++		qcom,pre-scaling = <1 1>;
++		qcom,ratiometric;
++		label = "bat_therm";
++	};
++};
++
++&spmi_bus {
++	pmic@2 {
++		battery-monitor@4800 {
++			compatible = "qcom,pmi632-battery-monitor";
++			/* QG block, SMB5 charger block */
++			reg = <0x4800>, <0x1000>;
++			monitored-battery = <&battery>;
++			io-channels = <&pmi632_adc ADC5_BAT_THERM_100K_PU>;
++			io-channel-names = "batt-therm";
++		};
++	};
++};

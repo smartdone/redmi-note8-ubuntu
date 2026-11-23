@@ -1,0 +1,5 @@
+# docker build runs with the repo root as context only for docker/ and the
+# pinned mkbootimg snapshot; keep the large trees out of it.
+*
+!docker/
+!sources/mkbootimg-*.tar.gz

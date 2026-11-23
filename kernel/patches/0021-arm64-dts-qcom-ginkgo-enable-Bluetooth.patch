@@ -1,0 +1,20 @@
+--- a/arch/arm64/boot/dts/qcom/sm6125-xiaomi-ginkgo.dts
++++ b/arch/arm64/boot/dts/qcom/sm6125-xiaomi-ginkgo.dts
+@@ -254,3 +254,17 @@
+ 		};
+ 	};
+ };
++
++/* Bluetooth half of the WCN39xx (Comanche, firmware cmbtfw/cmnv from the bluetooth partition) */
++&uart9 {
++	status = "okay";
++
++	bluetooth {
++		compatible = "qcom,wcn3950-bt";
++		vddio-supply = <&vreg_l9a>;
++		vddxo-supply = <&vreg_l16a>;
++		vddrf-supply = <&vreg_l17a>;
++		vddch0-supply = <&vreg_l23a>;
++		max-speed = <3200000>;
++	};
++};

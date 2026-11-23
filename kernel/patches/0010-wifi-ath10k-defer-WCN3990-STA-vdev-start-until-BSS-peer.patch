@@ -1,0 +1,126 @@
+diff --git a/drivers/net/wireless/ath/ath10k/core.h b/drivers/net/wireless/ath/ath10k/core.h
+index dfee43261..6491a896f 100644
+--- a/drivers/net/wireless/ath/ath10k/core.h
++++ b/drivers/net/wireless/ath/ath10k/core.h
+@@ -592,6 +592,9 @@ struct ath10k_vif {
+ 
+ 	bool is_started;
+ 	bool is_up;
++	/* WCN3990 STA: vdev start deferred until the BSS peer exists */
++	bool vdev_start_pending;
++	struct cfg80211_chan_def pending_chandef;
+ 	bool spectral_enabled;
+ 	bool ps;
+ 	u32 aid;
+diff --git a/drivers/net/wireless/ath/ath10k/mac.c b/drivers/net/wireless/ath/ath10k/mac.c
+index 8e604697d..1d2b68a73 100644
+--- a/drivers/net/wireless/ath/ath10k/mac.c
++++ b/drivers/net/wireless/ath/ath10k/mac.c
+@@ -7490,6 +7490,58 @@ static void ath10k_mac_vif_stations_tid_conf(void *data,
+ 	ieee80211_queue_work(iter_data->ar->hw, &arsta->tid_config_wk);
+ }
+ 
++/*
++ * WCN3990 firmware (seen with WLAN.HL.3.0.2 on SM6125) answers a station
++ * vdev start with status -1 until the peer for the BSS exists, so the
++ * interface never authenticates. Start the vdev right after the BSS peer is
++ * created instead of at channel context assignment.
++ */
++static bool ath10k_mac_defer_vdev_start(struct ath10k *ar,
++					struct ieee80211_vif *vif)
++{
++	return QCA_REV_WCN3990(ar) && vif->type == NL80211_IFTYPE_STATION &&
++	       !vif->p2p;
++}
++
++static int ath10k_mac_start_deferred_vdev(struct ath10k_vif *arvif,
++					  const u8 *peer_addr)
++{
++	struct ath10k *ar = arvif->ar;
++	int ret;
++
++	lockdep_assert_held(&ar->conf_mutex);
++
++	if (!arvif->vdev_start_pending)
++		return 0;
++
++	ret = ath10k_vdev_start(arvif, &arvif->pending_chandef);
++	if (ret) {
++		ath10k_warn(ar, "failed delayed vdev %d start after peer %pM: %d\n",
++			    arvif->vdev_id, peer_addr, ret);
++		return ret;
++	}
++
++	arvif->vdev_start_pending = false;
++	arvif->is_started = true;
++	ath10k_dbg(ar, ATH10K_DBG_MAC,
++		   "wcn3990 delayed vdev %u start after BSS peer\n",
++		   arvif->vdev_id);
++
++	ret = ath10k_mac_vif_setup_ps(arvif);
++	if (ret)
++		ath10k_warn(ar, "failed to update vdev %i ps: %d\n",
++			    arvif->vdev_id, ret);
++
++	if (ath10k_mac_can_set_cts_prot(arvif)) {
++		ret = ath10k_mac_set_cts_prot(arvif);
++		if (ret)
++			ath10k_warn(ar, "failed to set cts protection for vdev %d: %d\n",
++				    arvif->vdev_id, ret);
++	}
++
++	return 0;
++}
++
+ static int ath10k_sta_state(struct ieee80211_hw *hw,
+ 			    struct ieee80211_vif *vif,
+ 			    struct ieee80211_sta *sta,
+@@ -7596,6 +7648,17 @@ static int ath10k_sta_state(struct ieee80211_hw *hw,
+ 
+ 		spin_unlock_bh(&ar->data_lock);
+ 
++		if (vif->type == NL80211_IFTYPE_STATION && !sta->tdls &&
++		    arvif->vdev_start_pending) {
++			ret = ath10k_mac_start_deferred_vdev(arvif, sta->addr);
++			if (ret) {
++				ath10k_peer_delete(ar, arvif->vdev_id, sta->addr);
++				ath10k_mac_dec_num_stations(arvif, sta);
++				kfree(arsta->tx_stats);
++				goto exit;
++			}
++		}
++
+ 		if (!sta->tdls)
+ 			goto exit;
+ 
+@@ -9001,6 +9064,16 @@ ath10k_mac_op_assign_vif_chanctx(struct ieee80211_hw *hw,
+ 		return -EBUSY;
+ 	}
+ 
++	if (ath10k_mac_defer_vdev_start(ar, vif)) {
++		arvif->pending_chandef = ctx->def;
++		arvif->vdev_start_pending = true;
++		ath10k_dbg(ar, ATH10K_DBG_MAC,
++			   "wcn3990 defer vdev %u start until BSS peer\n",
++			   arvif->vdev_id);
++		mutex_unlock(&ar->conf_mutex);
++		return 0;
++	}
++
+ 	ret = ath10k_vdev_start(arvif, &ctx->def);
+ 	if (ret) {
+ 		ath10k_warn(ar, "failed to start vdev %i addr %pM on freq %d: %d\n",
+@@ -9076,6 +9149,13 @@ ath10k_mac_op_unassign_vif_chanctx(struct ieee80211_hw *hw,
+ 		   "mac chanctx unassign ptr %p vdev_id %i\n",
+ 		   ctx, arvif->vdev_id);
+ 
++	if (arvif->vdev_start_pending) {
++		/* the BSS peer never came, the vdev was never started */
++		arvif->vdev_start_pending = false;
++		mutex_unlock(&ar->conf_mutex);
++		return;
++	}
++
+ 	WARN_ON(!arvif->is_started);
+ 
+ 	if (vif->type == NL80211_IFTYPE_MONITOR) {

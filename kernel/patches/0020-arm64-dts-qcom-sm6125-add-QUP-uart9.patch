@@ -1,0 +1,50 @@
+--- a/arch/arm64/boot/dts/qcom/sm6125.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm6125.dtsi
+@@ -700,6 +700,29 @@
+ 				bias-disable;
+ 			};
+ 
++			qup_uart9_default: qup-uart9-default-state {
++				cts-rx-pins {
++					pins = "gpio10", "gpio13";
++					function = "qup14";
++					drive-strength = <2>;
++					bias-disable;
++				};
++
++				rts-pins {
++					pins = "gpio11";
++					function = "qup14";
++					drive-strength = <2>;
++					bias-pull-down;
++				};
++
++				tx-pins {
++					pins = "gpio12";
++					function = "qup14";
++					drive-strength = <2>;
++					bias-pull-up;
++				};
++			};
++
+ 			qup_uart4_default: qup-uart4-default-state {
+ 				pins = "gpio16", "gpio17";
+ 				function = "qup04";
+@@ -1211,6 +1234,17 @@
+ 				status = "disabled";
+ 			};
+ 
++			uart9: serial@4c90000 {
++				compatible = "qcom,geni-uart";
++				reg = <0x0 0x04c90000 0x0 0x4000>;
++				clocks = <&gcc GCC_QUPV3_WRAP1_S4_CLK>;
++				clock-names = "se";
++				interrupts = <GIC_SPI 312 IRQ_TYPE_LEVEL_HIGH>;
++				pinctrl-0 = <&qup_uart9_default>;
++				pinctrl-names = "default";
++				status = "disabled";
++			};
++
+ 			spi9: spi@4c90000 {
+ 				compatible = "qcom,geni-spi";
+ 				reg = <0x0 0x04c90000 0x0 0x4000>;

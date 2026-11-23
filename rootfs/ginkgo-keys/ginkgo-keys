@@ -1,0 +1,199 @@
+#!/usr/bin/python3
+"""Phone-style hardware keys for the GNOME session on the Redmi Note 8.
+
+  Power (short)          screen off + suspend (s2idle); press again to wake.
+                         While the phone is connected to a computer as a USB
+                         device (USB powered and gadget "configured") it only switches the
+                         screen off, so USB networking / SSH stay usable.
+  Power (hold ~1 s)      GNOME power-off dialog
+  Volume down + Power    screenshot to ~/Pictures/Screenshots
+
+Runs as a systemd user service in the graphical session. Reads the PMIC key
+devices directly (the user is in the "input" group); GNOME's and logind's own
+power-button handling are switched off so they do not also react.
+
+After any resume (power key here, GNOME's idle suspend, rtcwake...) logind's
+PrepareForSleep(false) turns the screen back on; the key press that woke the
+phone is swallowed so it does not switch the screen straight off again.
+"""
+
+import glob
+import os
+import select
+import struct
+import subprocess
+import time
+
+KEY_VOLUMEDOWN = 114
+KEY_POWER = 116
+EV_KEY = 1
+EVENT = struct.Struct("llHHi")      # struct input_event on 64-bit
+LONG_PRESS_S = 1.0
+WAKE_GRACE_S = 1.5                  # power presses this soon after resume woke us
+SUSPEND_DELAY_S = 0.5               # let the panel switch off first
+DEVICE_NAMES = ("pm8941_pwrkey", "pm8941_resin", "gpio-keys")
+
+
+def find_devices():
+    fds = []
+    for ev in sorted(os.listdir("/sys/class/input")):
+        if not ev.startswith("event"):
+            continue
+        try:
+            with open(f"/sys/class/input/{ev}/device/name") as f:
+                name = f.read().strip()
+        except OSError:
+            continue
+        if name in DEVICE_NAMES:
+            fds.append(os.open(f"/dev/input/{ev}", os.O_RDONLY | os.O_NONBLOCK))
+    return fds
+
+
+def mutter_power_save(mode=None):
+    """Get or set org.gnome.Mutter.DisplayConfig.PowerSaveMode (0 on, 3 off)."""
+    base = ["gdbus", "call", "--session", "--dest", "org.gnome.Mutter.DisplayConfig",
+            "--object-path", "/org/gnome/Mutter/DisplayConfig",
+            "--method"]
+    if mode is None:
+        out = subprocess.run(base + ["org.freedesktop.DBus.Properties.Get",
+                                     "org.gnome.Mutter.DisplayConfig", "PowerSaveMode"],
+                             capture_output=True, text=True).stdout
+        digits = [c for c in out if c.isdigit()]
+        return int(digits[0]) if digits else 0
+    subprocess.run(base + ["org.freedesktop.DBus.Properties.Set",
+                           "org.gnome.Mutter.DisplayConfig", "PowerSaveMode",
+                           f"<int32 {mode}>"], capture_output=True)
+
+
+def read(path):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def usb_host_connected():
+    """True when a computer has configured our USB gadget (dev setup).
+
+    The UDC state alone is not enough: dwc3 runs with a software VBUS
+    override (fixed peripheral role, no extcon), so it never sees the cable
+    go away and stays "configured" after unplugging. Require USB power too.
+    """
+    if not any(read(p) == "1" for p in glob.glob("/sys/class/power_supply/*/online")
+               if read(p.replace("/online", "/type")) == "USB"):
+        return False
+    return any(read(p) == "configured" for p in glob.glob("/sys/class/udc/*/state"))
+
+
+def suspend():
+    subprocess.run(["gdbus", "call", "--system", "--dest", "org.freedesktop.login1",
+                    "--object-path", "/org/freedesktop/login1", "--method",
+                    "org.freedesktop.login1.Manager.Suspend", "false"],
+                   capture_output=True)
+
+
+def screenshot():
+    d = os.path.expanduser("~/Pictures/Screenshots")
+    os.makedirs(d, exist_ok=True)
+    path = os.path.join(d, time.strftime("Screenshot-%Y-%m-%d-%H%M%S.png"))
+    if subprocess.run(["gnome-screenshot", "-f", path], capture_output=True).returncode == 0:
+        subprocess.run(["notify-send", "-i", "camera-photo", "Screenshot saved", path],
+                       capture_output=True)
+
+
+def sleep_monitor():
+    """gdbus monitor on logind; its stdout tells us about suspend/resume."""
+    return subprocess.Popen(
+        ["gdbus", "monitor", "--system", "--dest", "org.freedesktop.login1",
+         "--object-path", "/org/freedesktop/login1"],
+        stdout=subprocess.PIPE)
+
+
+def main():
+    fds = find_devices()
+    if not fds:
+        raise SystemExit("no key devices")
+    mon = sleep_monitor()
+    mon_buf = b""
+    voldown = False
+    power_down_at = None
+    combo_used = False          # this power press is used up (combo, long, wake)
+    sleeping = False            # between PrepareForSleep(true) and (false)
+    woke_at = -1e9
+    suspend_at = None           # pending suspend after screen off
+
+    while True:
+        deadlines = []
+        if power_down_at is not None and not combo_used:
+            deadlines.append(power_down_at + LONG_PRESS_S)
+        if suspend_at is not None:
+            deadlines.append(suspend_at)
+        timeout = max(0.0, min(deadlines) - time.monotonic()) if deadlines else None
+        ready, _, _ = select.select(fds + [mon.stdout.fileno()], [], [], timeout)
+        now = time.monotonic()
+
+        if suspend_at is not None and now >= suspend_at:
+            suspend_at = None
+            if mutter_power_save() and not usb_host_connected():
+                suspend()
+        if (power_down_at is not None and not combo_used
+                and now >= power_down_at + LONG_PRESS_S):
+            # power held long enough: power-off dialog, ignore the release
+            suspend_at = None
+            subprocess.Popen(["gnome-session-quit", "--power-off"])
+            combo_used = True
+
+        for fd in ready:
+            if fd == mon.stdout.fileno():
+                chunk = os.read(fd, 4096)
+                if not chunk:                   # monitor died: restart it
+                    mon.wait()
+                    mon, mon_buf = sleep_monitor(), b""
+                    continue
+                *lines, mon_buf = (mon_buf + chunk).split(b"\n")
+                for line in lines:
+                    if b"PrepareForSleep" not in line:
+                        continue
+                    if b"true" in line:
+                        sleeping = True
+                    else:
+                        sleeping = False
+                        woke_at = time.monotonic()
+                        mutter_power_save(0)
+                continue
+            data = os.read(fd, EVENT.size * 64)
+            for i in range(0, len(data) - EVENT.size + 1, EVENT.size):
+                _, _, etype, code, value = EVENT.unpack_from(data, i)
+                if etype != EV_KEY or value == 2:
+                    continue
+                if code == KEY_VOLUMEDOWN:
+                    voldown = value == 1
+                    if voldown and power_down_at is not None and not combo_used:
+                        combo_used = True
+                        screenshot()
+                elif code == KEY_POWER:
+                    if value == 1:
+                        power_down_at = time.monotonic()
+                        combo_used = False
+                        if sleeping or power_down_at - woke_at < WAKE_GRACE_S:
+                            # the press that woke the phone
+                            combo_used = True
+                            suspend_at = None
+                            mutter_power_save(0)
+                        elif voldown:
+                            combo_used = True
+                            screenshot()
+                    else:
+                        if power_down_at is not None and not combo_used:
+                            if mutter_power_save():
+                                suspend_at = None
+                                mutter_power_save(0)
+                            else:
+                                mutter_power_save(3)
+                                suspend_at = time.monotonic() + SUSPEND_DELAY_S
+                        power_down_at = None
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,10 @@
+# FastRPC device for hexagonrpcd (runs as user fastrpc)
+SUBSYSTEM=="misc", KERNEL=="fastrpc-adsp*", GROUP="fastrpc", MODE="0660"
+# The ADSP sensor PD has the accelerometer (BMI160) and proximity too; the
+# upstream iio-sensor-proxy rule only adds light and compass for ADSP.
+SUBSYSTEM=="misc", KERNEL=="fastrpc-adsp*", ENV{IIO_SENSOR_PROXY_TYPE}+="ssc-accel ssc-proximity"
+# The SSC reports in the Android convention (upright: +Y, flat screen up: +Z).
+# iio-sensor-proxy wants upright = -Y (orientation "normal") but screen up =
+# +Z (tilt "face-up"): flip X and Y only. Checked on the phone: upright ->
+# normal, both landscapes rotate GNOME correctly, flat -> face-up.
+SUBSYSTEM=="misc", KERNEL=="fastrpc-adsp*", ENV{ACCEL_MOUNT_MATRIX}="-1, 0, 0; 0, -1, 0; 0, 0, 1"

@@ -1,0 +1,12 @@
+{
+    "name": "Xiaomi Redmi Note 8",
+    "x-res": 1080,
+    "y-res": 2340,
+    "border-radius": 106,
+    "cutouts": [
+        {
+            "name": "notch",
+            "path": "M 460,0 L 460,80 L 620,80 L 620,0 Z"
+        }
+    ]
+}

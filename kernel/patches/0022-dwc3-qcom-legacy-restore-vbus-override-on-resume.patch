@@ -1,0 +1,20 @@
+--- a/drivers/usb/dwc3/dwc3-qcom-legacy.c
++++ b/drivers/usb/dwc3/dwc3-qcom-legacy.c
+@@ -483,6 +483,17 @@
+ 	if (ret)
+ 		dev_warn(qcom->dev, "failed to enable interconnect: %d\n", ret);
+ 
++	/*
++	 * The QSCRATCH VBUS override set at probe time does not survive system
++	 * suspend (seen on SM6125: UTMI_OTG_VBUS_VALID and LANE0_PWR_PRESENT
++	 * read back cleared), and without extcon nothing sets it again: the
++	 * gadget stays "not attached" after resume. Restore it the same way
++	 * probe sets it.
++	 */
++	if (qcom->mode != USB_DR_MODE_HOST && !qcom->edev &&
++	    !dwc3_qcom_is_host(qcom))
++		dwc3_qcom_vbus_override_enable(qcom, true);
++
+ 	/* Clear existing events from PHY related to L2 in/out */
+ 	for (i = 0; i < qcom->num_ports; i++) {
+ 		dwc3_qcom_setbits(qcom->qscratch_base,

@@ -1,0 +1,8 @@
+#!/bin/bash
+# pssh [cmd...]: SSH to the phone's Ubuntu over USB (172.16.42.1, user ubuntu).
+# PHONE=<ip> pssh ... uses another address (e.g. the phone's Wi-Fi address).
+# The host key is kept in tools/.known_hosts (not in ~/.ssh), since every
+# rootfs reflash generates a new one: delete that file after a reflash.
+here=$(cd "$(dirname "$0")" && pwd)
+exec ssh -o UserKnownHostsFile="$here/.known_hosts" -o StrictHostKeyChecking=accept-new \
+    -o ConnectTimeout=10 "ubuntu@${PHONE:-172.16.42.1}" "$@"

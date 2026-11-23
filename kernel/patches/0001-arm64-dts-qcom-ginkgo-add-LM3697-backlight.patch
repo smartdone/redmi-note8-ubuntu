@@ -1,0 +1,53 @@
+--- a/arch/arm64/boot/dts/qcom/sm6125-xiaomi-ginkgo.dts
++++ b/arch/arm64/boot/dts/qcom/sm6125-xiaomi-ginkgo.dts
+@@ -4,9 +4,50 @@
+  */
+ /dts-v1/;
+ 
++#include <dt-bindings/leds/common.h>
+ #include "sm6125-xiaomi-ginkgo-common.dtsi"
+ 
+ / {
+ 	model = "Xiaomi Redmi Note 8";
+ 	compatible = "xiaomi,ginkgo", "qcom,sm6125";
++
++	backlight: backlight {
++		compatible = "led-backlight";
++		leds = <&backlight_led>;
++		default-brightness-level = <1400>;
++	};
++};
++
++&i2c1 {
++	clock-frequency = <400000>;
++	status = "okay";
++
++	/*
++	 * Backlight controller. Android names it ktd3136, but the chip on this
++	 * phone has the TI LM3697 register map (rev 0x01 at 0x00, bank B
++	 * brightness at 0x22/0x23, bank enable at 0x24).
++	 */
++	led-controller@36 {
++		compatible = "ti,lm3697";
++		reg = <0x36>;
++		#address-cells = <1>;
++		#size-cells = <0>;
++		enable-gpios = <&pmi632_gpios 6 GPIO_ACTIVE_HIGH>;
++		/* Values the stock bootloader programs (reg 0x1a = 0x05). */
++		ti,ovp-microvolt = <32000000>;
++		ti,boost-frequency-hz = <1000000>;
++		/* GNOME treats raw backlights as linear */
++		ti,linear-mapping-mode;
++
++		/* The bootloader drives HVLED1 + HVLED2 from control bank B. */
++		backlight_led: led@1 {
++			reg = <1>;
++			led-sources = <0 1>;
++			ti,brightness-resolution = <2047>;
++			/* 25 mA full scale, as set by the bootloader (reg 0x18 = 0x19) */
++			led-max-microamp = <25000>;
++			function = LED_FUNCTION_BACKLIGHT;
++			color = <LED_COLOR_ID_WHITE>;
++		};
++	};
+ };

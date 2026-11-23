@@ -1,0 +1,10 @@
+{
+    "uuid": "screen-shape@ginkgo-ubuntu",
+    "name": "Screen shape",
+    "description": "Keeps the top bar clear of the display notch and rounded corners. Reads the panel shape for this device (matched by its device-tree compatible) from gmobile-style display-panel JSON files.",
+    "shell-version": [
+        "46",
+        "47",
+        "48"
+    ]
+}

@@ -1,0 +1,7 @@
+#!/bin/bash
+# psh 'cmd' [wait_seconds]: run a command in the initramfs rescue shell
+# (out/boot-rescue.img, telnet 172.16.42.1:23) and print its output.
+cmd="$1"; wait="${2:-5}"
+{ printf 'echo __PSH""_BEGIN__; %s; echo __PSH""_END__\n' "$cmd"; sleep "$wait"; } | nc 172.16.42.1 23 \
+  | LC_ALL=C tr -cd '\11\12\40-\176' \
+  | awk '/^__PSH_END__/ {exit} started {print} /^__PSH_BEGIN__/ {started=1}'

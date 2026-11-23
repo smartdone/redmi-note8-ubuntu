@@ -1,0 +1,143 @@
+diff --git a/drivers/leds/leds-lm3697.c b/drivers/leds/leds-lm3697.c
+index 83dc607a6..c3529099e 100644
+--- a/drivers/leds/leds-lm3697.c
++++ b/drivers/leds/leds-lm3697.c
+@@ -23,6 +23,8 @@
+ #define LM3697_CTRL_A_B_BRT_CFG		0x16
+ #define LM3697_CTRL_A_FS_CURR_CFG	0x17
+ #define LM3697_CTRL_B_FS_CURR_CFG	0x18
++#define LM3697_FEEDBACK_EN		0x19
++#define LM3697_BOOST_CTRL		0x1a
+ #define LM3697_PWM_CFG			0x1c
+ #define LM3697_CTRL_A_BRT_LSB		0x20
+ #define LM3697_CTRL_A_BRT_MSB		0x21
+@@ -42,6 +44,13 @@
+ #define LM3697_CONTROL_B	1
+ #define LM3697_MAX_CONTROL_BANKS 2
+ 
++#define LM3697_FS_CURR_MIN_UA	5000
++#define LM3697_FS_CURR_STEP_UA	800
++#define LM3697_FS_CURR_MAX_CODE	0x1f
++#define LM3697_BOOST_FREQ_1MHZ	BIT(0)
++#define LM3697_BOOST_OVP_SHIFT	1
++#define LM3697_MAP_LINEAR	BIT(0)
++
+ /**
+  * struct lm3697_led -
+  * @hvled_strings: Array of LED strings associated with a control bank
+@@ -86,6 +95,10 @@ struct lm3697 {
+ 	struct mutex lock;
+ 
+ 	int bank_cfg;
++	int feedback_cfg;
++	int fs_curr[LM3697_MAX_CONTROL_BANKS];
++	int boost_cfg;
++	bool linear_map;
+ 	int num_banks;
+ 
+ 	struct lm3697_led leds[] __counted_by(num_banks);
+@@ -100,6 +113,8 @@ static const struct reg_default lm3697_reg_defs[] = {
+ 	{LM3697_CTRL_A_B_BRT_CFG, 0x0},
+ 	{LM3697_CTRL_A_FS_CURR_CFG, 0x13},
+ 	{LM3697_CTRL_B_FS_CURR_CFG, 0x13},
++	{LM3697_FEEDBACK_EN, 0x7},
++	{LM3697_BOOST_CTRL, 0x0},
+ 	{LM3697_PWM_CFG, 0xc},
+ 	{LM3697_CTRL_A_BRT_LSB, 0x0},
+ 	{LM3697_CTRL_A_BRT_MSB, 0x0},
+@@ -189,6 +204,34 @@ static int lm3697_init(struct lm3697 *priv)
+ 	if (ret)
+ 		dev_err(dev, "Cannot write OUTPUT config\n");
+ 
++	/* Only strings that are wired up should take part in boost regulation. */
++	ret = regmap_write(priv->regmap, LM3697_FEEDBACK_EN, priv->feedback_cfg);
++	if (ret)
++		dev_err(dev, "Cannot write feedback enables\n");
++
++	for (i = 0; i < LM3697_MAX_CONTROL_BANKS; i++) {
++		if (priv->fs_curr[i] < 0)
++			continue;
++		ret = regmap_write(priv->regmap, LM3697_CTRL_A_FS_CURR_CFG + i,
++				   priv->fs_curr[i]);
++		if (ret)
++			dev_err(dev, "Cannot write full-scale current\n");
++	}
++
++	/* Both banks share the mapping; exponential is the chip default. */
++	if (priv->linear_map) {
++		ret = regmap_update_bits(priv->regmap, LM3697_CTRL_A_B_BRT_CFG,
++					 LM3697_MAP_LINEAR, LM3697_MAP_LINEAR);
++		if (ret)
++			dev_err(dev, "Cannot set linear mapping\n");
++	}
++
++	if (priv->boost_cfg >= 0) {
++		ret = regmap_write(priv->regmap, LM3697_BOOST_CTRL, priv->boost_cfg);
++		if (ret)
++			dev_err(dev, "Cannot write boost control\n");
++	}
++
+ 	for (i = 0; i < priv->num_banks; i++) {
+ 		led = &priv->leds[i];
+ 		ret = ti_lmu_common_set_ramp(&led->lmu_data);
+@@ -206,6 +249,7 @@ static int lm3697_probe_dt(struct lm3697 *priv)
+ 	int ret = -EINVAL;
+ 	int control_bank;
+ 	size_t i = 0;
++	u32 val;
+ 	int j;
+ 
+ 	priv->enable_gpio = devm_gpiod_get_optional(dev, "enable",
+@@ -218,6 +262,30 @@ static int lm3697_probe_dt(struct lm3697 *priv)
+ 	if (IS_ERR(priv->regulator))
+ 		priv->regulator = NULL;
+ 
++	priv->fs_curr[LM3697_CONTROL_A] = -1;
++	priv->fs_curr[LM3697_CONTROL_B] = -1;
++	priv->boost_cfg = -1;
++	priv->linear_map = device_property_read_bool(dev, "ti,linear-mapping-mode");
++	if (!device_property_read_u32(dev, "ti,ovp-microvolt", &val)) {
++		/* 16 V, 24 V, 32 V, 40 V */
++		if (val < 16000000 || val > 40000000 || val % 8000000) {
++			dev_err(dev, "invalid ti,ovp-microvolt %u\n", val);
++			return -EINVAL;
++		}
++		priv->boost_cfg = ((val - 16000000) / 8000000) <<
++				  LM3697_BOOST_OVP_SHIFT;
++	}
++	if (!device_property_read_u32(dev, "ti,boost-frequency-hz", &val)) {
++		if (val != 500000 && val != 1000000) {
++			dev_err(dev, "invalid ti,boost-frequency-hz %u\n", val);
++			return -EINVAL;
++		}
++		if (priv->boost_cfg < 0)
++			priv->boost_cfg = 0;
++		if (val == 1000000)
++			priv->boost_cfg |= LM3697_BOOST_FREQ_1MHZ;
++	}
++
+ 	device_for_each_child_node_scoped(dev, child) {
+ 		struct led_init_data init_data = {};
+ 
+@@ -262,9 +330,20 @@ static int lm3697_probe_dt(struct lm3697 *priv)
+ 			return ret;
+ 		}
+ 
+-		for (j = 0; j < led->num_leds; j++)
++		for (j = 0; j < led->num_leds; j++) {
+ 			priv->bank_cfg |=
+ 				(led->control_bank << led->hvled_strings[j]);
++			priv->feedback_cfg |= BIT(led->hvled_strings[j]);
++		}
++
++		if (!fwnode_property_read_u32(child, "led-max-microamp", &val)) {
++			if (val < LM3697_FS_CURR_MIN_UA)
++				val = LM3697_FS_CURR_MIN_UA;
++			priv->fs_curr[control_bank] =
++				min((val - LM3697_FS_CURR_MIN_UA) /
++				    LM3697_FS_CURR_STEP_UA,
++				    (u32)LM3697_FS_CURR_MAX_CODE);
++		}
+ 
+ 		ret = ti_lmu_common_get_ramp_params(dev, child, &led->lmu_data);
+ 		if (ret)

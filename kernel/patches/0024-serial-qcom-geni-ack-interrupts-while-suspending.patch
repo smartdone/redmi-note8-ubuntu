@@ -1,0 +1,36 @@
+--- a/drivers/tty/serial/qcom_geni_serial.c
++++ b/drivers/tty/serial/qcom_geni_serial.c
+@@ -1211,8 +1211,31 @@
+ 	struct tty_port *tport = &uport->state->port;
+ 	struct qcom_geni_serial_port *port = to_dev_port(uport);
+ 
+-	if (uport->suspended)
+-		return IRQ_NONE;
++	if (uport->suspended) {
++		/*
++		 * uart_suspend_port() sets ->suspended before it stops TX/RX
++		 * and waits for the transmitter to drain; the events raised in
++		 * that window (command cancel/abort, DMA done) are level
++		 * interrupts. Returning IRQ_NONE without acking them made the
++		 * line storm until the core disabled it (seen with the
++		 * Bluetooth UART on SM6125: 100000 interrupts per system
++		 * suspend, Bluetooth dead after resume). Ack them while the SE
++		 * is still clocked; shutdown disables the IRQ afterwards.
++		 */
++		if (pm_runtime_status_suspended(uport->dev))
++			return IRQ_NONE;
++		uart_port_lock(uport);
++		writel(readl(uport->membase + SE_GENI_M_IRQ_STATUS),
++		       uport->membase + SE_GENI_M_IRQ_CLEAR);
++		writel(readl(uport->membase + SE_GENI_S_IRQ_STATUS),
++		       uport->membase + SE_GENI_S_IRQ_CLEAR);
++		writel(readl(uport->membase + SE_DMA_TX_IRQ_STAT),
++		       uport->membase + SE_DMA_TX_IRQ_CLR);
++		writel(readl(uport->membase + SE_DMA_RX_IRQ_STAT),
++		       uport->membase + SE_DMA_RX_IRQ_CLR);
++		uart_port_unlock(uport);
++		return IRQ_HANDLED;
++	}
+ 
+ 	uart_port_lock(uport);
+ 

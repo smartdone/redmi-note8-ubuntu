@@ -1,0 +1,207 @@
+--- a/arch/arm64/boot/dts/qcom/sm6125.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm6125.dtsi
+@@ -44,6 +44,8 @@
+ 			compatible = "qcom,kryo260";
+ 			reg = <0x0 0x0>;
+ 			enable-method = "psci";
++			power-domains = <&cpu_pd0>;
++			power-domain-names = "psci";
+ 			capacity-dmips-mhz = <1024>;
+ 			qcom,freq-domain = <&cpufreq_hw 0>;
+ 			#cooling-cells = <2>;
+@@ -60,6 +62,8 @@
+ 			compatible = "qcom,kryo260";
+ 			reg = <0x0 0x1>;
+ 			enable-method = "psci";
++			power-domains = <&cpu_pd1>;
++			power-domain-names = "psci";
+ 			capacity-dmips-mhz = <1024>;
+ 			qcom,freq-domain = <&cpufreq_hw 0>;
+ 			#cooling-cells = <2>;
+@@ -71,6 +75,8 @@
+ 			compatible = "qcom,kryo260";
+ 			reg = <0x0 0x2>;
+ 			enable-method = "psci";
++			power-domains = <&cpu_pd2>;
++			power-domain-names = "psci";
+ 			capacity-dmips-mhz = <1024>;
+ 			qcom,freq-domain = <&cpufreq_hw 0>;
+ 			#cooling-cells = <2>;
+@@ -82,6 +88,8 @@
+ 			compatible = "qcom,kryo260";
+ 			reg = <0x0 0x3>;
+ 			enable-method = "psci";
++			power-domains = <&cpu_pd3>;
++			power-domain-names = "psci";
+ 			capacity-dmips-mhz = <1024>;
+ 			qcom,freq-domain = <&cpufreq_hw 0>;
+ 			#cooling-cells = <2>;
+@@ -93,6 +101,8 @@
+ 			compatible = "qcom,kryo260";
+ 			reg = <0x0 0x100>;
+ 			enable-method = "psci";
++			power-domains = <&cpu_pd4>;
++			power-domain-names = "psci";
+ 			capacity-dmips-mhz = <1638>;
+ 			qcom,freq-domain = <&cpufreq_hw 1>;
+ 			#cooling-cells = <2>;
+@@ -109,6 +119,8 @@
+ 			compatible = "qcom,kryo260";
+ 			reg = <0x0 0x101>;
+ 			enable-method = "psci";
++			power-domains = <&cpu_pd5>;
++			power-domain-names = "psci";
+ 			capacity-dmips-mhz = <1638>;
+ 			qcom,freq-domain = <&cpufreq_hw 1>;
+ 			#cooling-cells = <2>;
+@@ -120,6 +132,8 @@
+ 			compatible = "qcom,kryo260";
+ 			reg = <0x0 0x102>;
+ 			enable-method = "psci";
++			power-domains = <&cpu_pd6>;
++			power-domain-names = "psci";
+ 			capacity-dmips-mhz = <1638>;
+ 			qcom,freq-domain = <&cpufreq_hw 1>;
+ 			#cooling-cells = <2>;
+@@ -131,12 +145,76 @@
+ 			compatible = "qcom,kryo260";
+ 			reg = <0x0 0x103>;
+ 			enable-method = "psci";
++			power-domains = <&cpu_pd7>;
++			power-domain-names = "psci";
+ 			capacity-dmips-mhz = <1638>;
+ 			qcom,freq-domain = <&cpufreq_hw 1>;
+ 			#cooling-cells = <2>;
+ 			next-level-cache = <&l2_1>;
+ 		};
+ 
++		idle-states {
++			entry-method = "psci";
++
++			little_cpu_sleep_0: cpu-sleep-0-0 {
++				compatible = "arm,idle-state";
++				idle-state-name = "silver-rail-power-collapse";
++				arm,psci-suspend-param = <0x40000003>;
++				entry-latency-us = <290>;
++				exit-latency-us = <376>;
++				min-residency-us = <1182>;
++				local-timer-stop;
++			};
++
++			big_cpu_sleep_0: cpu-sleep-1-0 {
++				compatible = "arm,idle-state";
++				idle-state-name = "gold-rail-power-collapse";
++				arm,psci-suspend-param = <0x40000003>;
++				entry-latency-us = <297>;
++				exit-latency-us = <324>;
++				min-residency-us = <1110>;
++				local-timer-stop;
++			};
++		};
++
++		domain-idle-states {
++			cluster_0_sleep_0: cluster-sleep-0-0 {
++				/* GDHS */
++				compatible = "domain-idle-state";
++				arm,psci-suspend-param = <0x40000023>;
++				entry-latency-us = <360>;
++				exit-latency-us = <421>;
++				min-residency-us = <782>;
++			};
++
++			cluster_0_sleep_1: cluster-sleep-0-1 {
++				/* Power Collapse */
++				compatible = "domain-idle-state";
++				arm,psci-suspend-param = <0x41000043>;
++				entry-latency-us = <800>;
++				exit-latency-us = <2118>;
++				min-residency-us = <7376>;
++			};
++
++			cluster_1_sleep_0: cluster-sleep-1-0 {
++				/* GDHS */
++				compatible = "domain-idle-state";
++				arm,psci-suspend-param = <0x40000023>;
++				entry-latency-us = <314>;
++				exit-latency-us = <345>;
++				min-residency-us = <660>;
++			};
++
++			cluster_1_sleep_1: cluster-sleep-1-1 {
++				/* Power Collapse */
++				compatible = "domain-idle-state";
++				arm,psci-suspend-param = <0x41000043>;
++				entry-latency-us = <640>;
++				exit-latency-us = <1654>;
++				min-residency-us = <8094>;
++			};
++		};
++
+ 		cpu-map {
+ 			cluster0 {
+ 				core0 {
+@@ -197,6 +275,64 @@
+ 	psci {
+ 		compatible = "arm,psci-1.0";
+ 		method = "smc";
++
++		cpu_pd0: power-domain-cpu0 {
++			#power-domain-cells = <0>;
++			power-domains = <&cluster_0_pd>;
++			domain-idle-states = <&little_cpu_sleep_0>;
++		};
++
++		cpu_pd1: power-domain-cpu1 {
++			#power-domain-cells = <0>;
++			power-domains = <&cluster_0_pd>;
++			domain-idle-states = <&little_cpu_sleep_0>;
++		};
++
++		cpu_pd2: power-domain-cpu2 {
++			#power-domain-cells = <0>;
++			power-domains = <&cluster_0_pd>;
++			domain-idle-states = <&little_cpu_sleep_0>;
++		};
++
++		cpu_pd3: power-domain-cpu3 {
++			#power-domain-cells = <0>;
++			power-domains = <&cluster_0_pd>;
++			domain-idle-states = <&little_cpu_sleep_0>;
++		};
++
++		cpu_pd4: power-domain-cpu4 {
++			#power-domain-cells = <0>;
++			power-domains = <&cluster_1_pd>;
++			domain-idle-states = <&big_cpu_sleep_0>;
++		};
++
++		cpu_pd5: power-domain-cpu5 {
++			#power-domain-cells = <0>;
++			power-domains = <&cluster_1_pd>;
++			domain-idle-states = <&big_cpu_sleep_0>;
++		};
++
++		cpu_pd6: power-domain-cpu6 {
++			#power-domain-cells = <0>;
++			power-domains = <&cluster_1_pd>;
++			domain-idle-states = <&big_cpu_sleep_0>;
++		};
++
++		cpu_pd7: power-domain-cpu7 {
++			#power-domain-cells = <0>;
++			power-domains = <&cluster_1_pd>;
++			domain-idle-states = <&big_cpu_sleep_0>;
++		};
++
++		cluster_0_pd: power-domain-cpu-cluster0 {
++			#power-domain-cells = <0>;
++			domain-idle-states = <&cluster_0_sleep_0>, <&cluster_0_sleep_1>;
++		};
++
++		cluster_1_pd: power-domain-cpu-cluster1 {
++			#power-domain-cells = <0>;
++			domain-idle-states = <&cluster_1_sleep_0>, <&cluster_1_sleep_1>;
++		};
+ 	};
+ 
+ 	rpm: remoteproc {

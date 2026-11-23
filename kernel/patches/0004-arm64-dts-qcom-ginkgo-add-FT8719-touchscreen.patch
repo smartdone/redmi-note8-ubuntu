@@ -1,0 +1,23 @@
+--- a/arch/arm64/boot/dts/qcom/sm6125-xiaomi-ginkgo.dts
++++ b/arch/arm64/boot/dts/qcom/sm6125-xiaomi-ginkgo.dts
+@@ -49,3 +49,20 @@
+ 		};
+ 	};
+ };
++
++&spi2 {
++	status = "okay";
++
++	/* FocalTech FT8719 in-cell touch of the Huaxing panel */
++	touchscreen@0 {
++		compatible = "focaltech,ft8719-spi";
++		reg = <0>;
++		spi-max-frequency = <8000000>;
++		interrupts-extended = <&tlmm 88 IRQ_TYPE_EDGE_FALLING>;
++		reset-gpios = <&tlmm 87 GPIO_ACTIVE_LOW>;
++		vddio-supply = <&vreg_l9a>;
++		firmware-name = "focaltech/ft8719_huaxing.bin";
++		touchscreen-size-x = <1080>;
++		touchscreen-size-y = <2340>;
++	};
++};

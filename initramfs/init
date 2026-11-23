@@ -1,0 +1,136 @@
+#!/bin/busybox sh
+# Minimal initramfs for ginkgo bring-up.
+# 1. Sets up USB networking (CDC-NCM): phone 172.16.42.1, host gets 172.16.42.2 via DHCP.
+# 2. Starts a telnet rescue shell on 172.16.42.1:23.
+# 3. Finds root=LABEL=... and switch_roots into Ubuntu.
+#    Stays in the rescue shell if "rescue" is on the cmdline or no rootfs is found.
+
+/bin/busybox --install -s /bin
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+
+mkdir -p /proc /sys /dev /run /tmp /sysroot
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+mkdir -p /dev/pts && mount -t devpts devpts /dev/pts
+mount -t configfs configfs /sys/kernel/config 2>/dev/null
+
+log() {
+    echo "[initramfs] $*"
+    echo "[initramfs] $*" > /dev/tty0 2>/dev/null
+    echo "[initramfs] $*" > /dev/kmsg 2>/dev/null
+}
+
+cmdline=$(cat /proc/cmdline)
+log "kernel $(uname -r)"
+
+# Bring-up probe: prove that kernel + initramfs run without needing screen or USB.
+for arg in $cmdline; do
+    case "$arg" in probe=*) log "probe: rebooting to ${arg#probe=}"; sleep 2; /bin/rebootarg "${arg#probe=}" ;; esac
+done
+
+# ---- USB gadget ------------------------------------------------------------
+setup_usb() {
+    G=/sys/kernel/config/usb_gadget/g1
+    [ -d /sys/kernel/config/usb_gadget ] || { log "no configfs usb_gadget"; return 1; }
+    [ -d "$G" ] && return 0
+
+    i=0
+    while [ -z "$(ls /sys/class/udc 2>/dev/null)" ] && [ $i -lt 50 ]; do
+        sleep 0.2; i=$((i + 1))
+    done
+    UDC=$(ls /sys/class/udc 2>/dev/null | head -n1)
+    [ -n "$UDC" ] || { log "no USB device controller found"; return 1; }
+
+    mkdir -p "$G"
+    echo 0x18d1 > "$G/idVendor"
+    echo 0xd001 > "$G/idProduct"
+    mkdir -p "$G/strings/0x409"
+    echo "Xiaomi" > "$G/strings/0x409/manufacturer"
+    echo "Redmi Note 8 (ginkgo) Linux" > "$G/strings/0x409/product"
+    echo "ginkgo-mainline" > "$G/strings/0x409/serialnumber"
+
+    mkdir -p "$G/functions/ncm.usb0"
+    echo "02:00:00:4e:38:01" > "$G/functions/ncm.usb0/dev_addr"
+    echo "02:00:00:4e:38:02" > "$G/functions/ncm.usb0/host_addr"
+
+    mkdir -p "$G/configs/c.1/strings/0x409"
+    echo "NCM" > "$G/configs/c.1/strings/0x409/configuration"
+    echo 500 > "$G/configs/c.1/MaxPower"
+    ln -s "$G/functions/ncm.usb0" "$G/configs/c.1/"
+
+    echo "$UDC" > "$G/UDC" || { log "failed to bind UDC $UDC"; return 1; }
+    log "USB gadget bound to $UDC"
+}
+
+start_rescue_services() {
+    ip link set lo up
+    if ip link set usb0 up 2>/dev/null; then
+        ip addr add 172.16.42.1/24 dev usb0
+        cat > /etc/udhcpd.conf <<EOF
+start 172.16.42.2
+end 172.16.42.2
+interface usb0
+max_leases 1
+option subnet 255.255.255.0
+lease_file /tmp/udhcpd.leases
+EOF
+        touch /tmp/udhcpd.leases
+        udhcpd /etc/udhcpd.conf
+        telnetd -p 23 -l /bin/sh
+        log "telnet 172.16.42.1 for a rescue shell"
+    else
+        log "usb0 not available"
+    fi
+}
+
+stop_rescue_services() {
+    killall telnetd udhcpd 2>/dev/null
+    ip addr flush dev usb0 2>/dev/null
+}
+
+rescue() {
+    log "RESCUE MODE: $*"
+    log "dmesg is in /proc/kmsg, try: telnet 172.16.42.1"
+    while true; do sleep 3600; done
+}
+
+setup_usb
+start_rescue_services
+
+# ---- root filesystem -------------------------------------------------------
+case " $cmdline " in
+    *" rescue "*) rescue "requested on kernel cmdline" ;;
+esac
+
+# Take the FIRST root=: the stock bootloader appends its own
+# root=PARTUUID=<Android system> (plus skip_initramfs ro init=/init) after ours.
+root=""
+for arg in $cmdline; do
+    case "$arg" in root=*) [ -n "$root" ] || root=${arg#root=} ;; esac
+done
+[ -n "$root" ] || root="LABEL=ginkgo-root"
+
+log "waiting for root $root"
+dev=""
+i=0
+while [ $i -lt 30 ]; do
+    dev=$(findfs "$root" 2>/dev/null)
+    [ -n "$dev" ] && break
+    sleep 1; i=$((i + 1))
+done
+[ -n "$dev" ] || rescue "root $root not found"
+
+log "mounting $dev"
+# Read-only: systemd-fsck-root only checks a read-only root, then
+# systemd-remount-fs remounts it read-write (fstab "defaults").
+mount -t ext4 -o ro "$dev" /sysroot || rescue "cannot mount $dev"
+[ -x /sysroot/sbin/init ] || [ -L /sysroot/sbin/init ] || rescue "no /sbin/init on $dev"
+
+stop_rescue_services
+log "switching to Ubuntu"
+umount /dev/pts 2>/dev/null
+mount --move /dev /sysroot/dev
+umount /sys/kernel/config 2>/dev/null
+umount /sys /proc
+exec switch_root /sysroot /sbin/init

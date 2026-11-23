@@ -1,0 +1,18 @@
+# Serves the sensor configuration and registry (copied from the stock vendor
+# and persist partitions to /usr/share/qcom/sm6125/Xiaomi/ginkgo) to the ADSP
+# sensor PD over FastRPC. Without it the SSC (QMI service 400) has no sensors.
+[Unit]
+Description=FastRPC file server for the ADSP sensor PD (ginkgo)
+After=ginkgo-firmware.service
+ConditionPathExists=/dev/fastrpc-adsp
+ConditionPathExists=/usr/share/qcom/sm6125/Xiaomi/ginkgo/sensors/registry
+
+[Service]
+ExecStart=/usr/bin/hexagonrpcd -f /dev/fastrpc-adsp -d adsp -s -R /usr/share/qcom/sm6125/Xiaomi/ginkgo
+Restart=always
+RestartSec=3
+User=fastrpc
+Group=fastrpc
+
+[Install]
+WantedBy=multi-user.target

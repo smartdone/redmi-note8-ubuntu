@@ -1,0 +1,94 @@
+--- a/arch/arm64/boot/dts/qcom/sm6125.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm6125.dtsi
+@@ -44,6 +44,8 @@
+ 			reg = <0x0 0x0>;
+ 			enable-method = "psci";
+ 			capacity-dmips-mhz = <1024>;
++			qcom,freq-domain = <&cpufreq_hw 0>;
++			#cooling-cells = <2>;
+ 			next-level-cache = <&l2_0>;
+ 			l2_0: l2-cache {
+ 				compatible = "cache";
+@@ -58,6 +60,8 @@
+ 			reg = <0x0 0x1>;
+ 			enable-method = "psci";
+ 			capacity-dmips-mhz = <1024>;
++			qcom,freq-domain = <&cpufreq_hw 0>;
++			#cooling-cells = <2>;
+ 			next-level-cache = <&l2_0>;
+ 		};
+ 
+@@ -67,6 +71,8 @@
+ 			reg = <0x0 0x2>;
+ 			enable-method = "psci";
+ 			capacity-dmips-mhz = <1024>;
++			qcom,freq-domain = <&cpufreq_hw 0>;
++			#cooling-cells = <2>;
+ 			next-level-cache = <&l2_0>;
+ 		};
+ 
+@@ -76,6 +82,8 @@
+ 			reg = <0x0 0x3>;
+ 			enable-method = "psci";
+ 			capacity-dmips-mhz = <1024>;
++			qcom,freq-domain = <&cpufreq_hw 0>;
++			#cooling-cells = <2>;
+ 			next-level-cache = <&l2_0>;
+ 		};
+ 
+@@ -85,6 +93,8 @@
+ 			reg = <0x0 0x100>;
+ 			enable-method = "psci";
+ 			capacity-dmips-mhz = <1638>;
++			qcom,freq-domain = <&cpufreq_hw 1>;
++			#cooling-cells = <2>;
+ 			next-level-cache = <&l2_1>;
+ 			l2_1: l2-cache {
+ 				compatible = "cache";
+@@ -99,6 +109,8 @@
+ 			reg = <0x0 0x101>;
+ 			enable-method = "psci";
+ 			capacity-dmips-mhz = <1638>;
++			qcom,freq-domain = <&cpufreq_hw 1>;
++			#cooling-cells = <2>;
+ 			next-level-cache = <&l2_1>;
+ 		};
+ 
+@@ -108,6 +120,8 @@
+ 			reg = <0x0 0x102>;
+ 			enable-method = "psci";
+ 			capacity-dmips-mhz = <1638>;
++			qcom,freq-domain = <&cpufreq_hw 1>;
++			#cooling-cells = <2>;
+ 			next-level-cache = <&l2_1>;
+ 		};
+ 
+@@ -117,6 +131,8 @@
+ 			reg = <0x0 0x103>;
+ 			enable-method = "psci";
+ 			capacity-dmips-mhz = <1638>;
++			qcom,freq-domain = <&cpufreq_hw 1>;
++			#cooling-cells = <2>;
+ 			next-level-cache = <&l2_1>;
+ 		};
+ 
+@@ -1699,6 +1715,19 @@
+ 			};
+ 		};
+ 
++		cpufreq_hw: cpufreq@f521000 {
++			compatible = "qcom,sm6125-cpufreq-hw", "qcom,cpufreq-hw";
++			reg = <0x0 0x0f521000 0x0 0x1000>,
++			      <0x0 0x0f523000 0x0 0x1000>;
++			reg-names = "freq-domain0", "freq-domain1";
++
++			clocks = <&rpmcc RPM_SMD_XO_CLK_SRC>, <&gcc GPLL0_OUT_EARLY>;
++			clock-names = "xo", "alternate";
++
++			#freq-domain-cells = <1>;
++			#clock-cells = <1>;
++		};
++
+ 		intc: interrupt-controller@f200000 {
+ 			compatible = "arm,gic-v3";
+ 			reg = <0x0 0x0f200000 0x0 0x20000>,

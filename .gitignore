@@ -1,0 +1,28 @@
+# Build outputs (boot images, rootfs image, kernel package, screenshots)
+out/
+
+# Local, per-builder or per-phone files
+config/authorized_keys
+backup/
+tools/.known_hosts
+
+# Downloaded build inputs: scripts/fetch-sources.sh and scripts/fetch-firmware.sh
+# recreate them (see sources/README.md)
+sources/*
+!sources/README.md
+
+# Reference material used during bring-up (see reference/README.md)
+reference/*
+!reference/README.md
+
+# This phone's firmware and sensor data pulled from the stock partitions
+# (signed / device-specific, not redistributable)
+firmware/
+
+# Bring-up notes (local only)
+docs/
+
+# Editor / OS clutter
+.DS_Store
+*.swp
+__pycache__/
