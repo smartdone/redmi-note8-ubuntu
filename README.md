@@ -125,7 +125,8 @@ rootfs/                  files installed into the rootfs: display-panels/ (notch
                          corner data), gnome-shell-extensions/screen-shape@ginkgo-ubuntu,
                          ginkgo-keys/ (power key + screenshot user service),
                          alsa-ucm2/ (sound card use case profile),
-                         sensors/ (hexagonrpcd unit, udev rule, sensor stack build)
+                         sensors/ (hexagonrpcd unit, udev rule, sensor stack build),
+                         firefox/ (Mozilla APT repository: native arm64 Firefox)
 tools/                   phone helpers: pssh (SSH), psh (rescue telnet),
                          fastboot-boot, reboot-into, deploy-modules;
                          phone/ (debug helpers run on the phone: GPIO v2, amp regs)

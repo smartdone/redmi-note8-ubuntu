@@ -1,0 +1,8 @@
+# Mozilla's APT repository: native arm64 Firefox. Ubuntu's own "firefox"
+# package only installs the snap, which needs snapd and AppArmor (not in this
+# kernel). Key fingerprint 35BAA0B33E9EB396F59CA838C0BA5CE6DC6315A3.
+Types: deb
+URIs: https://packages.mozilla.org/apt
+Suites: mozilla
+Components: main
+Signed-By: /etc/apt/keyrings/packages.mozilla.org.asc

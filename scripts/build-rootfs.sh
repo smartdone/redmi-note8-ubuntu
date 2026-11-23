@@ -64,7 +64,15 @@ if [ "$DESKTOP" = 1 ]; then
         yaru-theme-gtk yaru-theme-icon yaru-theme-gnome-shell yaru-theme-sound \
         fonts-noto-core fonts-noto-cjk fonts-noto-color-emoji \
         xdg-user-dirs-gtk gsettings-desktop-schemas dconf-cli \
-        mesa-utils pipewire wireplumber gnome-screenshot libnotify-bin"
+        mesa-utils pipewire wireplumber gnome-screenshot libnotify-bin eog"
+    # Firefox from Mozilla's APT repository (native arm64 deb); Ubuntu's own
+    # firefox package is a snap wrapper and snapd needs AppArmor. Repository
+    # files and the signing key are in rootfs/firefox/.
+    install -D -m 0644 /src/rootfs/firefox/packages.mozilla.org.asc \
+        "$ROOT/etc/apt/keyrings/packages.mozilla.org.asc"
+    install -m 0644 /src/rootfs/firefox/mozilla.sources "$ROOT/etc/apt/sources.list.d/mozilla.sources"
+    install -D -m 0644 /src/rootfs/firefox/mozilla.pref "$ROOT/etc/apt/preferences.d/mozilla"
+    PKGS="$PKGS firefox"
 fi
 
 chroot "$ROOT" /bin/bash -euo pipefail <<EOF
