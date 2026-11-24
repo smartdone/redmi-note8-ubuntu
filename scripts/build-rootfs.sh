@@ -377,7 +377,7 @@ show-battery-percentage=true
 text-scaling-factor=1.0
 
 [org/gnome/shell]
-enabled-extensions=['screen-shape@ginkgo-ubuntu']
+enabled-extensions=['screen-shape@ginkgo-ubuntu', 'auto-brightness@ginkgo-ubuntu']
 
 [org/gnome/desktop/a11y/applications]
 screen-keyboard-enabled=true
@@ -400,7 +400,8 @@ lock-enabled=false
 ubuntu-lock-on-suspend=false
 EOF
     # Keep the top bar clear of the notch and rounded corners (see
-    # rootfs/gnome-shell-extensions/; panel shape in rootfs/display-panels/).
+    # rootfs/gnome-shell-extensions/; panel shape in rootfs/display-panels/),
+    # plus a quick settings toggle for automatic brightness.
     install -d "$ROOT/usr/share/gnome-shell/extensions" "$ROOT/usr/share/display-panels"
     cp -r /src/rootfs/gnome-shell-extensions/. "$ROOT/usr/share/gnome-shell/extensions/"
     cp /src/rootfs/display-panels/*.json "$ROOT/usr/share/display-panels/"

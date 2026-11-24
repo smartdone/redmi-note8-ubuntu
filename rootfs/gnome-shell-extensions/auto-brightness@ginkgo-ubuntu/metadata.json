@@ -1,0 +1,10 @@
+{
+    "uuid": "auto-brightness@ginkgo-ubuntu",
+    "name": "Auto brightness toggle",
+    "description": "Quick settings toggle for automatic screen brightness (gsd-power ambient-enabled). Shown only while iio-sensor-proxy reports an ambient light sensor.",
+    "shell-version": [
+        "46",
+        "47",
+        "48"
+    ]
+}

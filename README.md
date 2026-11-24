@@ -17,7 +17,7 @@ FT8719 panel.
 | Display | MSM DPU + DSI + Huaxing FT8719 panel driver, GNOME at 2x | top bar kept clear of the notch/corners by the screen-shape extension |
 | GPU | Adreno 610, Mesa freedreno (FD610) | zap shader copied from the vendor partition at boot |
 | CPU | cpufreq-hw, schedutil | little 0.3–1.8 GHz, big 0.3–2.0 GHz |
-| Backlight | LM3697 (Android calls it ktd3136) | `/sys/class/backlight/backlight`, 0–2047 |
+| Backlight | LM3697 (Android calls it ktd3136) | `/sys/class/backlight/backlight`, 0–2047; automatic brightness from the light sensor (on by default, "Auto Brightness" toggle in the system menu) |
 | Touch | FocalTech FT8719 over SPI, own driver | firmware fetched by `scripts/fetch-firmware.sh` |
 | USB network | CDC-NCM, phone `172.16.42.1` | SSH as `ubuntu`, key only |
 | Rescue shell | `telnet 172.16.42.1` from the initramfs | if root not found or `boot-rescue.img` |
@@ -122,7 +122,8 @@ reference/               material used during bring-up (reference images,
                          downstream drivers, datasheets); see reference/README.md
 firmware/phone/          this phone's modem/Wi-Fi firmware (local only)
 rootfs/                  files installed into the rootfs: display-panels/ (notch and
-                         corner data), gnome-shell-extensions/screen-shape@ginkgo-ubuntu,
+                         corner data), gnome-shell-extensions/ (screen-shape: notch,
+                         app grid; auto-brightness: quick settings toggle),
                          ginkgo-keys/ (power key + screenshot user service),
                          alsa-ucm2/ (sound card use case profile),
                          sensors/ (hexagonrpcd unit, udev rule, sensor stack build),
