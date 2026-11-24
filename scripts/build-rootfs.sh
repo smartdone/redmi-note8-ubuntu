@@ -73,7 +73,9 @@ if [ "$DESKTOP" = 1 ]; then
         "$ROOT/etc/apt/keyrings/packages.mozilla.org.asc"
     install -m 0644 /src/rootfs/firefox/mozilla.sources "$ROOT/etc/apt/sources.list.d/mozilla.sources"
     install -D -m 0644 /src/rootfs/firefox/mozilla.pref "$ROOT/etc/apt/preferences.d/mozilla"
-    PKGS="$PKGS firefox"
+    # Mozilla's build decodes AAC/H.264 with the system FFmpeg (dlopen, not a
+    # package dependency); without libavcodec web videos play without sound.
+    PKGS="$PKGS firefox libavcodec60"
 fi
 
 chroot "$ROOT" /bin/bash -euo pipefail <<EOF
